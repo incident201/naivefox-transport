@@ -162,6 +162,11 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	select {
+	case <-t.stop:
+		return nil, errors.New("closed transport")
+	default:
+	}
 	if cookie, err := r.Cookie("app_session"); err == nil {
 		if s := t.sessions[cookie.Value]; s != nil && s.ip == ip {
 			s.mu.Lock()
@@ -303,7 +308,6 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		}
 		return t.finishIdle(w, s, ready)
 	}
-	s.mu.Lock()
 	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" || exchange || path == "/api/sync/bulk" {
 		capacity := 4096
 		if path == "/api/sync/bulk" {
@@ -313,7 +317,10 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			capacity = 131072
 		}
 		if r.Method != "POST" || (path == "/api/action" && !t.appProfile().Commit) {
-			s.mu.Unlock()
+			t.reject(w)
+			return nil
+		}
+		if r.Context().Err() != nil {
 			t.reject(w)
 			return nil
 		}
@@ -327,10 +334,24 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		if s.appendMode {
 			expected += used
 		}
-		if err != nil || decodeErr != nil || len(body) != expected || used > capacity-cell.Header || sequence != s.up {
+		if err != nil || decodeErr != nil || len(body) != expected || used > capacity-cell.Header {
+			t.reject(w)
+			return nil
+		}
+		// Body reads belong to this request, never to the shared session lock.
+		// Expiry and cleanup must remain able to close a stalled upload's peer.
+		s.mu.Lock()
+		if r.Context().Err() != nil || sequence != s.up {
 			s.mu.Unlock()
 			t.reject(w)
 			return nil
+		}
+		select {
+		case <-s.peer.Done():
+			s.mu.Unlock()
+			t.reject(w)
+			return nil
+		default:
 		}
 		useful, opens := uint64(0), uint64(0)
 		if len(frames) > 0 && frames[0].Kind == cell.Auth {
@@ -398,7 +419,6 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 	if r.Method != "GET" {
-		s.mu.Unlock()
 		t.reject(w)
 		return nil
 	}
@@ -421,7 +441,6 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	if path == "/api/data/download" || path == "/api/data/mixed" {
 		capacity = 65536
 	}
-	s.mu.Unlock()
 	return t.downstream(w, s, capacity)
 }
 

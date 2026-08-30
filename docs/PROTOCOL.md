@@ -100,6 +100,11 @@ half-closes retire entries immediately; repeated short connections cannot grow
 the scheduler while the client omits downstream reads. Removing an entry keeps
 the next surviving stream's turn.
 
+Upload bodies are read and decoded within their fixed size limit before taking
+the session mutex. A stalled body cannot hold session expiry or global cleanup
+locks. Expired or cancelled uploads are rejected without authenticating or
+advancing the cell sequence; sequence validation remains atomic with dispatch.
+
 ## Startup
 
 Each startup round sends one 4096-byte `POST /api/sync` (204, empty response),
