@@ -63,6 +63,7 @@ var profiles = func() map[string]appProfile {
 	derive("continuous-bulk-pair", "continuous-bulk-window512", func(p *appProfile) { p.PairBulk = true })
 	derive("continuous-bulk-pipeline", "continuous-bulk-pair", func(p *appProfile) { p.PipelineBulk = true })
 	derive("continuous-bulk-idle-events", "continuous-bulk-duplex", func(p *appProfile) { p.IdleEvents = true })
+	derive("continuous-bulk-pipeline-events", "continuous-bulk-pipeline", func(p *appProfile) { p.IdleEvents = true })
 	return values
 }()
 

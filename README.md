@@ -128,6 +128,12 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-pipeline-events` composes the bounded pipeline and idle
+event/heartbeat split. It retains 512-KiB credit, two fixed bulk transactions,
+ordered local delivery and at most two HTTP responses. Only idle differs from
+pipeline alone. No fast filler/progress probe/deferred ACK is enabled. Fresh
+cost/residual evidence is required; old continuous-v1 scores do not qualify it.
+
 `continuous-bulk-idle-events` independently changes only bulk-duplex's idle
 API: timeout without observed work returns 204/no cell; activity returns a
 fixed 8-KiB cell. The long-poll maximum remains 30 seconds, wake POST 4 KiB,

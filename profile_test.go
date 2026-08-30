@@ -67,3 +67,17 @@ func TestPairProfilesIsolateOverlap(t *testing.T) {
 		t.Fatal("confounded overlap")
 	}
 }
+
+func TestPipelineEventCompositionChangesOnlyIdle(t *testing.T) {
+	got := profiles["continuous-bulk-pipeline-events"]
+	want := profiles["continuous-bulk-pipeline"]
+	if !got.IdleEvents || want.IdleEvents {
+		t.Fatal("idle policy")
+	}
+	got.IdleEvents = false
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(want)
+	if string(a) != string(b) {
+		t.Fatal("confounded composition")
+	}
+}
