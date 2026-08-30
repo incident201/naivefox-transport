@@ -128,6 +128,14 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-idle-events` independently changes only bulk-duplex's idle
+API: timeout without observed work returns 204/no cell; activity returns a
+fixed 8-KiB cell. The long-poll maximum remains 30 seconds, wake POST 4 KiB,
+and startup/active budgets are unchanged. HTTP 204 does not advance codec
+sequence. A race at timeout leaves late work for the next poll, not discarded.
+This removes carrier-body cost for genuine heartbeat timeouts but can spend
+more filler on active wakes. All visitors see the same status/capacity policy.
+
 `continuous-bulk-pair` and `continuous-bulk-pipeline` both derive from window512
 and commit to two 16/256-KiB exchanges per bulk lease. The first is serial; the
 second starts the next POST after the first response headers and after preparing

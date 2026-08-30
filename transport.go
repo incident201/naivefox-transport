@@ -44,6 +44,7 @@ type Transport struct {
 }
 
 type counters struct {
+	IdleHeartbeats            uint64            `json:"idle_heartbeats"`
 	ProgressHintOpportunities uint64            `json:"progress_hint_opportunities"`
 	ProgressHintPromotions    uint64            `json:"progress_hint_promotions"`
 	CreditHintOpportunities   uint64            `json:"credit_hint_opportunities"`
@@ -286,7 +287,8 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.mu.Lock()
 		t.stats.IdleStarted++
 		t.mu.Unlock()
-		if err := waitIdle(r.Context(), s, 30*time.Second); err != nil {
+		ready, err := waitIdleEvent(r.Context(), s, 30*time.Second)
+		if err != nil {
 			if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
 				t.mu.Lock()
 				t.stats.IdleCancelled++
@@ -296,13 +298,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			}
 			return nil
 		}
-		err := t.downstream(w, s, 512)
-		if err == nil {
-			t.mu.Lock()
-			t.stats.IdleCompleted++
-			t.mu.Unlock()
-		}
-		return err
+		return t.finishIdle(w, s, ready)
 	}
 	s.mu.Lock()
 	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" || exchange || path == "/api/sync/bulk" {
@@ -426,11 +422,38 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	return t.downstream(w, s, capacity)
 }
 
+func (t *Transport) finishIdle(w http.ResponseWriter, s *session, ready bool) error {
+	if t.appProfile().IdleEvents && !ready {
+		w.WriteHeader(http.StatusNoContent)
+		t.mu.Lock()
+		t.stats.IdleHeartbeats++
+		t.stats.IdleCompleted++
+		t.mu.Unlock()
+		return nil
+	}
+	capacity := 512
+	if t.appProfile().IdleEvents {
+		capacity = 8192
+	}
+	err := t.downstream(w, s, capacity)
+	if err == nil {
+		t.mu.Lock()
+		t.stats.IdleCompleted++
+		t.mu.Unlock()
+	}
+	return err
+}
+
 func waitIdle(ctx context.Context, s *session, timeout time.Duration) error {
+	_, err := waitIdleEvent(ctx, s, timeout)
+	return err
+}
+
+func waitIdleEvent(ctx context.Context, s *session, timeout time.Duration) (bool, error) {
 	s.mu.Lock()
 	if s.idle {
 		s.mu.Unlock()
-		return errors.New("idle poll already active")
+		return false, errors.New("idle poll already active")
 	}
 	s.idle = true
 	up := s.up
@@ -444,15 +467,15 @@ func waitIdle(ctx context.Context, s *session, timeout time.Duration) error {
 		changed := s.up != up
 		s.mu.Unlock()
 		if changed || pressure.Bytes > 0 || pressure.Controls > 0 {
-			return ctx.Err()
+			return true, ctx.Err()
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		case <-s.peer.Done():
-			return context.Canceled
+			return false, context.Canceled
 		case <-timer.C:
-			return nil
+			return false, nil
 		case <-s.peer.Changes():
 		case <-s.wake:
 		}

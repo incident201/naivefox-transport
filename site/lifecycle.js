@@ -94,4 +94,13 @@ async function activeExchange(io, state, duplex) {
   return io.receive(duplex ? sent : await io.fetch("/api/data/" + state), capacity);
 }
 
-if (typeof module !== "undefined") module.exports = {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, bulkPair};
+async function receiveIdle(response, events, receive) {
+  if (events && response.status === 204) {
+    if (response.headers.get("X-App-Capacity") !== null || (await response.arrayBuffer()).byteLength !== 0) throw new Error("idle heartbeat envelope");
+    return "idle"; // No cell and therefore no downstream sequence increment.
+  }
+  if (events && response.status !== 200) throw new Error("idle event status");
+  return receive(response, events ? 8192 : 512);
+}
+
+if (typeof module !== "undefined") module.exports = {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, bulkPair, receiveIdle};

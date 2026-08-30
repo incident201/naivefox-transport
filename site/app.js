@@ -70,7 +70,7 @@ __NFC_LIFECYCLE__
         const ready=await Promise.race([remote,waiting.promise.then(()=>({wake:true}))]);
         waiting.cancel();
         if(ready.response) {
-          const state=await receiveSlot(ready.response,512);complete=true;return state;
+          const state=await receiveIdle(ready.response,profile.idle_events,receiveSlot);complete=true;return state;
         }
         observed=wake.version;
         const value=await pressure();
@@ -79,7 +79,7 @@ __NFC_LIFECYCLE__
         const sent=await sendSlot(4096,"/api/sync");
         if(sent.status!==204)throw new Error("idle wake");
         window.__NFC_IDLE_WAKE_POSTS__++;
-        const state=await receiveSlot(await response,512);complete=true;return state;
+        const state=await receiveIdle(await response,profile.idle_events,receiveSlot);complete=true;return state;
       }
     } finally {
       if(waiting)waiting.cancel();
