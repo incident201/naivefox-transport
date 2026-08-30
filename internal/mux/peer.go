@@ -14,6 +14,8 @@ import (
 
 type DialFunc func(context.Context, string) (net.Conn, error)
 
+const streamChunk = 16 * 1024
+
 type Stats struct {
 	ReceiveWindow uint32 `json:"receive_window"`
 	Opened        uint64 `json:"opened"`
@@ -30,7 +32,8 @@ type stream struct {
 	cancel           context.CancelFunc
 	connMu           sync.Mutex
 	conn             net.Conn
-	input            chan cell.Frame
+	input            []cell.Frame
+	inputReady       chan struct{}
 	output           chan cell.Frame
 	pending          *cell.Frame
 	open             *cell.Frame
@@ -127,7 +130,7 @@ func (p *Peer) Pressure() Pressure {
 
 func (p *Peer) newStream(id uint32) *stream {
 	ctx, cancel := context.WithCancel(p.ctx)
-	s := &stream{id: id, ctx: ctx, cancel: cancel, input: make(chan cell.Frame, 128), output: make(chan cell.Frame, 16), credit: p.window, budget: p.window}
+	s := &stream{id: id, ctx: ctx, cancel: cancel, input: make([]cell.Frame, 0, int(p.window)/streamChunk+1), inputReady: make(chan struct{}, 1), output: make(chan cell.Frame, 16), credit: p.window, budget: p.window}
 	p.streams[id] = s
 	p.order = append(p.order, id)
 	p.stats.Opened++
@@ -199,7 +202,7 @@ func (p *Peer) read(s *stream, conn net.Conn) {
 	defer p.wg.Done()
 	var sequence uint32
 	for {
-		body := make([]byte, 16*1024)
+		body := make([]byte, streamChunk)
 		n, err := conn.Read(body)
 		if n > 0 {
 			if uint64(sequence)+uint64(n) > uint64(^uint32(0)) {
@@ -235,38 +238,73 @@ func (p *Peer) read(s *stream, conn net.Conn) {
 func (p *Peer) write(s *stream, conn net.Conn) {
 	defer p.wg.Done()
 	for {
-		select {
-		case <-s.ctx.Done():
+		p.mu.Lock()
+		if s.ctx.Err() != nil {
+			p.mu.Unlock()
 			return
-		case f := <-s.input:
-			if f.Kind == cell.Fin {
-				if half, ok := conn.(interface{ CloseWrite() error }); ok {
-					if err := half.CloseWrite(); err != nil {
-						p.fail(s)
-						return
-					}
-				}
-				p.mu.Lock()
-				s.remoteFinWritten = true
-				p.mu.Unlock()
+		}
+		if len(s.input) == 0 {
+			p.mu.Unlock()
+			select {
+			case <-s.ctx.Done():
 				return
+			case <-s.inputReady:
 			}
-			body := f.Body
-			for len(body) > 0 {
-				n, err := conn.Write(body)
-				if err != nil || n == 0 {
+			continue
+		}
+		f := s.input[0]
+		copy(s.input, s.input[1:])
+		s.input[len(s.input)-1] = cell.Frame{}
+		s.input = s.input[:len(s.input)-1]
+		p.mu.Unlock()
+		if f.Kind == cell.Fin {
+			if half, ok := conn.(interface{ CloseWrite() error }); ok {
+				if err := half.CloseWrite(); err != nil {
 					p.fail(s)
 					return
 				}
-				body = body[n:]
 			}
 			p.mu.Lock()
-			s.budget += uint32(len(f.Body))
-			s.grant += uint32(len(f.Body))
-			p.stats.Delivered += uint64(len(f.Body))
+			s.remoteFinWritten = true
 			p.mu.Unlock()
-			p.notify()
+			return
 		}
+		body := f.Body
+		for len(body) > 0 {
+			n, err := conn.Write(body)
+			if err != nil || n == 0 {
+				p.fail(s)
+				return
+			}
+			body = body[n:]
+		}
+		p.mu.Lock()
+		s.budget += uint32(len(f.Body))
+		s.grant += uint32(len(f.Body))
+		p.stats.Delivered += uint64(len(f.Body))
+		p.mu.Unlock()
+		p.notify()
+	}
+}
+
+// Receive holds p.mu. Byte credit bounds queued data plus the writer's current
+// chunk, independently of how many small DATA frames arrived on the wire.
+func (s *stream) enqueueData(frame cell.Frame) {
+	for offset := 0; offset < len(frame.Body); {
+		if len(s.input) == 0 || len(s.input[len(s.input)-1].Body) == streamChunk {
+			s.input = append(s.input, cell.Frame{Kind: cell.Data, Stream: frame.Stream, Sequence: frame.Sequence + uint32(offset), Body: make([]byte, 0, streamChunk)})
+		}
+		tail := &s.input[len(s.input)-1]
+		length := min(streamChunk-len(tail.Body), len(frame.Body)-offset)
+		tail.Body = append(tail.Body, frame.Body[offset:offset+length]...)
+		offset += length
+	}
+}
+
+func (s *stream) notifyInput() {
+	select {
+	case s.inputReady <- struct{}{}:
+	default:
 	}
 }
 
@@ -318,24 +356,18 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 			if s.remoteFin || f.Sequence != s.nextIn || len(f.Body) == 0 || uint64(len(f.Body)) > uint64(s.budget) || uint64(s.nextIn)+uint64(len(f.Body)) > uint64(^uint32(0)) {
 				return errors.New("data sequence or credit")
 			}
-			select {
-			case s.input <- f:
-			default:
-				return errors.New("input frame bound")
-			}
+			s.enqueueData(f)
 			s.nextIn += uint32(len(f.Body))
 			s.budget -= uint32(len(f.Body))
 			p.stats.Received += uint64(len(f.Body))
+			s.notifyInput()
 		case cell.Fin:
 			if s.remoteFin || len(f.Body) != 0 || f.Sequence != s.nextIn {
 				return errors.New("fin sequence")
 			}
-			select {
-			case s.input <- f:
-			default:
-				return errors.New("input frame bound")
-			}
+			s.input = append(s.input, f)
 			s.remoteFin = true
+			s.notifyInput()
 		case cell.Reset:
 			if len(f.Body) != 0 || f.Sequence != 0 {
 				return errors.New("reset format")

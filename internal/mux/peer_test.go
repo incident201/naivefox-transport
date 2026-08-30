@@ -108,7 +108,7 @@ func TestConfiguredWindowBoundsWithoutWriterProgress(t *testing.T) {
 			want = cell.Window
 		}
 		s := peer.newStream(1) // No attached writer: no delivery or credit grant.
-		if s.credit != want || s.budget != want || peer.Snapshot().ReceiveWindow != want || cap(s.output) != 16 || cap(s.input) != 128 {
+		if s.credit != want || s.budget != want || peer.Snapshot().ReceiveWindow != want || cap(s.output) != 16 || cap(s.input) != int(want)/streamChunk+1 || cap(s.inputReady) != 1 {
 			t.Fatal("window or queue bound")
 		}
 		for offset := uint32(0); offset < want; offset += 16384 {

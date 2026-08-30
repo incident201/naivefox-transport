@@ -89,7 +89,12 @@ the stream fails closed instead of wrapping. Retired-stream frames may be
 ignored, but IDs may not be reused to open a new stream.
 
 At most 32 streams are active per session. The server has 16 queued outbound
-reads of at most 16 KiB and 128 inbound frame slots per stream. Credit alone is
+reads of at most 16 KiB per stream. Inbound DATA frames coalesce into chunks of
+at most 16 KiB under the byte-credit bound, with one ordered FIN slot and a
+single wake signal. Tiny wire frames therefore do not exhaust an unrelated
+frame-count quota. The default window permits at most 33 allocated inbound
+data chunks including the in-flight writer chunk; payload bytes across the
+queue and writer never exceed 512 KiB. Credit alone is
 not a total memory bound; prefetched/in-flight cells and frame allocations are
 additional. Slow readers stop credit replenishment instead of growing a queue
 without a bound. The server permits at most 128 sessions and expires sessions
