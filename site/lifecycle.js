@@ -25,8 +25,9 @@ function activityState(pressure, remote) {
   return "idle";
 }
 
-async function runLifecycle(io, wake, slots = 4, bulk = false) {
+async function runLifecycle(io, wake, slots = 4, bulk = false, shortState = "") {
   if (![2, 4].includes(slots)) throw new Error("invalid activity lease");
+  if (!["", "interactive", "upload"].includes(shortState)) throw new Error("invalid short state");
   let remote = "idle";
   while (io.alive()) {
     const observed = wake.version;
@@ -35,7 +36,7 @@ async function runLifecycle(io, wake, slots = 4, bulk = false) {
     io.state(state);
     if (state === "idle") remote = await io.idle(observed);
     else {
-      const length = state === "bulk" ? 1 : slots;
+      const length = state === "bulk" || state === shortState ? 1 : slots;
       for (let slot = 0; slot < length && io.alive(); slot++) remote = await io.exchange(state);
     }
   }

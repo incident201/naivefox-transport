@@ -128,6 +128,13 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+Two independent lease ablations retain bulk-duplex behavior:
+`continuous-bulk-interactive1` rechecks state after one interactive slot;
+`continuous-bulk-upload1` rechecks after one upload slot. They keep the other
+state's four slots, the four-slot mixed lease, single bulk exchange and all
+per-slot capacities. Earlier state reevaluation can reduce tails or add local
+IPC/state churn; these variants require separate paired measurement.
+
 `continuous-bulk-duplex` independently tests one 16-KiB POST-200 with a
 256-KiB response at `/api/sync/bulk`, replacing the bulk-ready POST-204/GET pair.
 Other states, credit hints and buffered delivery are unchanged. Unlike the

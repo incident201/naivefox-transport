@@ -73,6 +73,22 @@ test("bulk profile does not coalesce upload, mixed or interactive leases", async
   }
 });
 
+test("per-state short leases change only the selected state", async () => {
+  for(const short of ["interactive","upload"]){
+    for(const [initialBytes,remote,expected] of [[1,"idle","interactive"],[32768,"idle","upload"],[32768,"download","mixed"]]){
+      let active=true,calls=0,queries=0,polls=0,bytes=initialBytes;
+      await runLifecycle({
+        alive:()=>active,
+        pressure:async()=>({bytes:++queries===1?0:bytes,controls:0}),state(){},
+        idle:async()=>{if(++polls===2)active=false;return remote;},
+        exchange:async(state)=>{assert.equal(state,expected);calls++;bytes=0;return "idle";},
+      },new WakeLatch(),4,true,short);
+      assert.equal(calls,expected===short?1:4);
+    }
+  }
+  await assert.rejects(runLifecycle({alive:()=>false},new WakeLatch(),4,true,"mixed"),/short state/);
+});
+
 test("activity states select fixed classes, not a byte-exact response size", () => {
   assert.equal(activityState({bytes: 0, controls: 0}, "idle"), "idle");
   assert.equal(activityState({bytes: 0, controls: 1}, "idle"), "interactive");
