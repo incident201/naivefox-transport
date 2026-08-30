@@ -17,6 +17,7 @@ type appProfile struct {
 	DeferredAck   bool   `json:"deferred_ack,omitempty"`
 	BulkAckOnly   bool   `json:"bulk_ack_only,omitempty"`
 	ReceiveWindow uint32 `json:"receive_window,omitempty"`
+	FillerOnly    bool   `json:"filler_only,omitempty"`
 }
 
 var stagedSlots = []int{8192, 8192, 8192, 8192, 32768, 32768, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 8192, 8192}
@@ -53,6 +54,7 @@ var profiles = func() map[string]appProfile {
 	derive("continuous-bulk-noack", "continuous-bulk-duplex", func(p *appProfile) { p.DeferredAck = true })
 	derive("continuous-bulk-noack-download", "continuous-bulk-noack", func(p *appProfile) { p.BulkAckOnly = true })
 	derive("continuous-bulk-window512", "continuous-bulk-duplex", func(p *appProfile) { p.ReceiveWindow = 524288 })
+	derive("continuous-bulk-filler", "continuous-bulk-duplex", func(p *appProfile) { p.FillerOnly = true })
 	return values
 }()
 

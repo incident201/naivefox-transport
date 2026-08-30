@@ -3,6 +3,7 @@ package cell
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"testing"
 )
 
@@ -31,6 +32,47 @@ func TestReplacementKeepsCapacity(t *testing.T) {
 			if filler != expected {
 				t.Fatal("replacement accounting", filler, expected)
 			}
+		}
+	}
+}
+
+func TestFillerOnlyEncodingPreservesUsefulPrefix(t *testing.T) {
+	for _, load := range []int{0, 131072, MaxCell - Header - FrameHeader} {
+		frames := []Frame{{Kind: Data, Stream: 1, Body: bytes.Repeat([]byte{91}, load)}}
+		a, err := encode(3, MaxCell, frames, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := encode(3, MaxCell, frames, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		used := Header + FrameHeader + load
+		if len(a) != len(b) || !bytes.Equal(a[:used], b[:used]) {
+			t.Fatal("useful prefix changed")
+		}
+		if _, _, _, err := Decode(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEncodeFiller(b *testing.B) {
+	for _, used := range []int{0, 131072, 245760} {
+		for _, suffix := range []bool{false, true} {
+			b.Run(fmt.Sprintf("used%d/suffix%t", used, suffix), func(b *testing.B) {
+				frames := []Frame{}
+				if used > 0 {
+					frames = append(frames, Frame{Kind: Data, Stream: 1, Body: make([]byte, used)})
+				}
+				b.SetBytes(MaxCell)
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := encode(1, MaxCell, frames, suffix); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
 		}
 	}
 }

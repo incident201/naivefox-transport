@@ -484,7 +484,11 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	if s.appendMode {
 		capacity += used
 	}
-	body, err := cell.Encode(s.down, capacity, frames)
+	encode := cell.Encode
+	if t.appProfile().FillerOnly {
+		encode = cell.EncodeFillerOnly
+	}
+	body, err := encode(s.down, capacity, frames)
 	s.down++
 	s.mu.Unlock()
 	if err != nil {

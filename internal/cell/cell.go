@@ -31,6 +31,16 @@ type Frame struct {
 func (f Frame) Size() int { return FrameHeader + len(f.Body) }
 
 func Encode(sequence uint32, capacity int, frames []Frame) ([]byte, error) {
+	return encode(sequence, capacity, frames, false)
+}
+
+// EncodeFillerOnly leaves the fully overwritten useful prefix out of the RNG.
+// All remaining padding is fresh crypto/rand data, with the same wire capacity.
+func EncodeFillerOnly(sequence uint32, capacity int, frames []Frame) ([]byte, error) {
+	return encode(sequence, capacity, frames, true)
+}
+
+func encode(sequence uint32, capacity int, frames []Frame, fillerOnly bool) ([]byte, error) {
 	if capacity < Header || capacity > MaxCell || len(frames) > 4096 {
 		return nil, errors.New("invalid cell capacity")
 	}
@@ -42,7 +52,11 @@ func Encode(sequence uint32, capacity int, frames []Frame) ([]byte, error) {
 		return nil, errors.New("cell overflow")
 	}
 	body := make([]byte, capacity)
-	if _, err := rand.Read(body); err != nil {
+	randomPart := body
+	if fillerOnly {
+		randomPart = body[used:]
+	}
+	if _, err := rand.Read(randomPart); err != nil {
 		return nil, err
 	}
 	copy(body, "NFC1")

@@ -39,3 +39,17 @@ func TestWindowProfileChangesOnlyCredit(t *testing.T) {
 		t.Fatal("confounded profile")
 	}
 }
+
+func TestFillerProfileChangesOnlyEncoder(t *testing.T) {
+	got := profiles["continuous-bulk-filler"]
+	want := profiles["continuous-bulk-duplex"]
+	if !got.FillerOnly || want.FillerOnly {
+		t.Fatal("encoder")
+	}
+	got.FillerOnly = false
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(want)
+	if string(a) != string(b) {
+		t.Fatal("confounded profile")
+	}
+}

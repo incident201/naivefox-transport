@@ -128,6 +128,12 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-filler` retains bulk-duplex's original window and profile but
+generates random bytes only for the unused suffix. Useful bytes overwrite the
+entire prefix; all filler still comes fresh from crypto/rand. Body capacity,
+wire codec and allocation size are unchanged. This separately measures CPU
+wasted randomizing data that is immediately overwritten, not padding reuse.
+
 `continuous-bulk-window512` changes only bulk-duplex's per-stream credit/budget
 from 256 to 512 KiB at both mux peers. Cell capacities, prefetch depth, HTTP
 concurrency and ACKs are unchanged. Bridge private `receive_window` configuration

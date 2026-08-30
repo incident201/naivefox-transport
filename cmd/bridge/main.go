@@ -34,6 +34,7 @@ type config struct {
 	Append        bool   `json:"append"`
 	Continuous    bool   `json:"continuous"`
 	ReceiveWindow uint32 `json:"receive_window"`
+	FillerOnly    bool   `json:"filler_only"`
 }
 
 func main() {
@@ -168,7 +169,11 @@ func run(path string) error {
 						capacity += f.Size()
 					}
 				}
-				reply, err = cell.Encode(uploadSequence, capacity, frames)
+				encode := cell.Encode
+				if cfg.FillerOnly {
+					encode = cell.EncodeFillerOnly
+				}
+				reply, err = encode(uploadSequence, capacity, frames)
 				if err != nil {
 					return
 				}
