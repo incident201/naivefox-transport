@@ -143,7 +143,7 @@ func run(path string) error {
 					return
 				}
 				capacity := int(binary.BigEndian.Uint32(body[1:]))
-				if capacity != 4096 && capacity != 131072 {
+				if capacity != 4096 && capacity != 131072 && !(cfg.Continuous && capacity == 16384) {
 					return
 				}
 				frames := []cell.Frame{}

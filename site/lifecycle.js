@@ -25,25 +25,27 @@ function activityState(pressure, remote) {
   return "idle";
 }
 
-async function runLifecycle(io, wake, slots = 4) {
+async function runLifecycle(io, wake, slots = 4, bulk = false) {
   if (![2, 4].includes(slots)) throw new Error("invalid activity lease");
   let remote = "idle";
   while (io.alive()) {
     const observed = wake.version;
-    const state = activityState(await io.pressure(), remote);
+    let state = activityState(await io.pressure(), remote);
+    if (bulk && state === "download") state = "bulk";
     io.state(state);
     if (state === "idle") remote = await io.idle(observed);
     else {
-      for (let slot = 0; slot < slots && io.alive(); slot++) remote = await io.exchange(state);
+      const length = state === "bulk" ? 1 : slots;
+      for (let slot = 0; slot < length && io.alive(); slot++) remote = await io.exchange(state);
     }
   }
 }
 
 async function activeExchange(io, state, duplex) {
   const uploading = state === "upload" || state === "mixed";
-  const capacity = state === "download" || state === "mixed" ? 65536 : 8192;
-  const endpoint = duplex ? "/api/exchange/" + state : uploading ? "/api/upload/chunk" : "/api/sync";
-  const sent = await io.send(uploading ? 131072 : 4096, endpoint);
+  const capacity = state === "bulk" ? 262144 : state === "download" || state === "mixed" ? 65536 : 8192;
+  const endpoint = state === "bulk" ? "/api/sync/bulk" : duplex ? "/api/exchange/" + state : uploading ? "/api/upload/chunk" : "/api/sync";
+  const sent = await io.send(state === "bulk" ? 16384 : uploading ? 131072 : 4096, endpoint);
   if (sent.status !== (duplex ? 200 : 204)) throw new Error("active sync");
   return io.receive(duplex ? sent : await io.fetch("/api/data/" + state), capacity);
 }

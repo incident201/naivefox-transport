@@ -106,7 +106,7 @@ __NFC_LIFECYCLE__
           const hint=await activeExchange({send:sendSlot,receive:receiveSlot,fetch:path=>fetch(path,{credentials:"same-origin"})},state,profile.live_duplex);
           window.__NFC_DYNAMIC_ROUNDS__++;return hint;
         },
-      },wake,profile.lease_slots);
+      },wake,profile.lease_slots,profile.bulk);
     } catch (_) { if(socket)socket.close();status.textContent="Synchronization unavailable.";window.__NFC_ERROR__="application-or-transport"; }
     finally { running=false;window.__NFC_ALIVE__=false; }
   }

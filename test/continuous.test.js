@@ -28,6 +28,41 @@ test("failed active exchange cannot silently consume a downstream slot", async (
   }
 });
 
+test("one bulk transaction preserves the four-slot download lease budget", async () => {
+  let up = 0, down = 0, active = true, polls = 0, exchanges = 0;
+  await runLifecycle({
+    alive: () => active,
+    pressure: async () => ({bytes: 0, controls: 0}),
+    state() {},
+    idle: async () => { if (++polls === 2) active = false; return "download"; },
+    exchange: async state => {
+      assert.equal(state, "bulk"); exchanges++;
+      return activeExchange({
+        send: async (capacity, path) => { up += capacity; assert.equal(path, "/api/sync/bulk"); return {status: 204}; },
+        fetch: async path => { assert.equal(path, "/api/data/bulk"); return {}; },
+        receive: async (_, capacity) => { down += capacity; return "idle"; },
+      }, state, false);
+    },
+  }, new WakeLatch(), 4, true);
+  assert.equal(exchanges, 1);
+  assert.equal(up, 4 * 4096);
+  assert.equal(down, 4 * 65536);
+});
+
+test("bulk profile does not coalesce upload, mixed or interactive leases", async () => {
+  for (const [bytes, remote, expected] of [[32768, "idle", "upload"], [32768, "download", "mixed"], [1, "idle", "interactive"]]) {
+    let active = true, calls = 0, pressureCalls = 0;
+    await runLifecycle({
+      alive: () => active,
+      pressure: async () => { pressureCalls++; return {bytes: pressureCalls === 1 ? 0 : bytes, controls: 0}; },
+      state() {},
+      idle: async () => remote,
+      exchange: async state => { assert.equal(state, expected); if (++calls === 4) active = false; return "idle"; },
+    }, new WakeLatch(), 4, true);
+    assert.equal(calls, 4);
+  }
+});
+
 test("activity states select fixed classes, not a byte-exact response size", () => {
   assert.equal(activityState({bytes: 0, controls: 0}, "idle"), "idle");
   assert.equal(activityState({bytes: 0, controls: 1}, "idle"), "interactive");

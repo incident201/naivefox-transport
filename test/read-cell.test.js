@@ -94,6 +94,16 @@ test("truncated filler invalidates a response after early delivery", async () =>
   assert.equal(calls, 1);
 });
 
+test("maximum-size bulk bodies validate in buffered and prefix modes", async () => {
+  const body = cell(262144);
+  for (const streaming of [false, true]) {
+    let delivered;
+    await readCarrier(response(body, body.length, body.length), body.length, 7, streaming, async value => { delivered = value; });
+    assert.deepEqual(delivered, streaming ? body.slice(0, 39) : body);
+  }
+  await assert.rejects(readCarrier(response(body.slice(0, -1), body.length, body.length), body.length, 7, false, async () => { assert.fail(); }), /body length/);
+});
+
 test("malformed headers and frames never reach the sink", async () => {
   const mutations = [
     body => { body[0] = 0; },

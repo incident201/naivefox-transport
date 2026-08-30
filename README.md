@@ -118,6 +118,14 @@ body capacities, but a fixed two-slot active lease instead of four. This halves
 the capacity committed before checking state again (256 rather than 512 KiB
 for upload); it does not change per-stream credit or the startup/idle contract.
 
+`continuous-bulk` is a separate equal-budget download experiment based on
+continuous-v1. One 16-KiB POST `/api/sync/bulk` followed by one 256-KiB GET
+`/api/data/bulk` replaces a four-slot download lease (4/64 KiB per pair).
+Interactive, upload and mixed retain their original four pairs; idle and
+startup are unchanged. No wait for a full target buffer or larger credit is
+introduced. Full-body buffering can delay useful delivery on slower links;
+speed and filler utilization must be measured before adopting this profile.
+
 ## Framing and limits
 
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,

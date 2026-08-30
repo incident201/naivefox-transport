@@ -230,10 +230,11 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, asset := assetDefinition(path)
+	bulk := t.appProfile().Bulk && (path == "/api/sync/bulk" || path == "/api/data/bulk")
 	exchange := t.appProfile().LiveDuplex && (path == "/api/exchange/interactive" || path == "/api/exchange/download" || path == "/api/exchange/upload" || path == "/api/exchange/mixed")
 	continuousPath := path == "/api/events/idle" || path == "/api/data/interactive" || path == "/api/data/download" || path == "/api/data/upload" || path == "/api/data/mixed"
 	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk" || (t.appProfile().Continuous && continuousPath)
-	if !asset && !carrier && !exchange {
+	if !asset && !carrier && !exchange && !bulk {
 		return next.ServeHTTP(w, r)
 	}
 	t.mu.Lock()
@@ -297,8 +298,11 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return err
 	}
 	s.mu.Lock()
-	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" || exchange {
+	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" || exchange || path == "/api/sync/bulk" {
 		capacity := 4096
+		if path == "/api/sync/bulk" {
+			capacity = 16384
+		}
 		if path == "/api/upload/chunk" || path == "/api/exchange/upload" || path == "/api/exchange/mixed" {
 			capacity = 131072
 		}
@@ -389,6 +393,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 	capacity := 24576
+	if path == "/api/data/bulk" {
+		capacity = 262144
+	}
 	if path == "/api/events/brief" {
 		capacity = 8192
 	}
