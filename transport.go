@@ -30,6 +30,7 @@ var site embed.FS
 func init() { caddy.RegisterModule(Transport{}) }
 
 type Transport struct {
+	AppendMode     bool     `json:"append_mode,omitempty"`
 	StatsPath      string   `json:"stats_path,omitempty"`
 	Key            string   `json:"key"`
 	AllowedTargets []string `json:"allowed_targets"`
@@ -157,7 +158,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	if _, err := rand.Read(token); err != nil {
 		return nil, err
 	}
-	s := &session{ip: ip, last: time.Now(), appendMode: r.URL.Query().Get("mode") == "append"}
+	s := &session{ip: ip, last: time.Now(), appendMode: t.AppendMode}
 	s.peer = mux.New(func(ctx context.Context, target string) (net.Conn, error) {
 		allowed := false
 		for _, value := range t.AllowedTargets {

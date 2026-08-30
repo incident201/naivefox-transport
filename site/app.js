@@ -1,7 +1,6 @@
 "use strict";
 (() => {
   const params = new URLSearchParams(location.hash.slice(1));
-  const mode = new URLSearchParams(location.search).get("mode");
   const rounds = Math.max(12, Math.min(256, Number(params.get("rounds")) || 16));
   let socket, pending, sequence = 0, running = false;
   const chart = document.getElementById("chart").getContext("2d");
@@ -34,7 +33,8 @@
         if(!response.ok)throw new Error("events");
         const result=new Uint8Array(await response.arrayBuffer());
         const declared=Number(response.headers.get("X-App-Capacity"));
-        if(result.length<declared || (mode!=="append"&&result.length!==declared))throw new Error("capacity");
+        const used=new DataView(result.buffer).getUint32(8);
+        if(result.length!==declared && result.length!==declared+used-16)throw new Error("capacity");
         if(socket){const message=new Uint8Array(result.length+1);message[0]=2;message.set(result,1);await ipc(message);}
         chart.fillStyle=round%2?"#c0d69b":"#779989";chart.fillRect(round*640/rounds,120-(round+1)*100/rounds,640/rounds-2,(round+1)*100/rounds);
         document.getElementById("progress").value=round+1;status.textContent=`Archive segment ${round+1} of ${rounds}`;

@@ -37,6 +37,9 @@ append-ablation run exhausted its usable slots with roughly 117 KiB outstanding.
 The incomplete comparison was not scored. V1 increases the declared lifecycle
 symmetrically for empty, replacement and append sessions, before new scoring.
 Its extra capacity is a real bandwidth cost, not a free optimization.
+The root is ASCII for admission by the existing lean H3 control. The append
+ablation is selected by private server/bridge configuration, not by a different
+wire URL: every outer navigation requests exactly `/`.
 
 ## Framing and limits
 
