@@ -128,6 +128,14 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-progress` adds a productive-cell handoff to bulk-filler:
+at least 128 KiB useful data in a bulk cell and a not-yet-finished readable
+stream permit one subsequent bulk hint despite an empty instantaneous queue.
+An empty or low-use response cannot renew it, and observed FIN/reset cannot
+justify it. Actual credits are unchanged. This explicitly risks one 256-KiB
+empty tail probe; it tests state decisions coupled to producer/encoder timing,
+not a wait or larger window. Separate opportunity/promotion counters are kept.
+
 `continuous-bulk-filler` retains bulk-duplex's original window and profile but
 generates random bytes only for the unused suffix. Useful bytes overwrite the
 entire prefix; all filler still comes fresh from crypto/rand. Body capacity,

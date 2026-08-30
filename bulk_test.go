@@ -34,6 +34,28 @@ func TestCreditHintIsBoundedByUsefulProgress(t *testing.T) {
 	}
 }
 
+func TestProgressHandoffCannotRenewAnEmptyProbe(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, state := range []string{"idle", "interactive"} {
+			next, opportunity := progressHandoff(state, mux.Pressure{Readable: 1}, 262144, 131072, enabled)
+			if !opportunity || (enabled && next != "download") || (!enabled && next != state) {
+				t.Fatal("progress handoff")
+			}
+			for _, useful := range []uint64{0, 1, 131071} {
+				if next, opportunity := progressHandoff(state, mux.Pressure{Readable: 1}, 262144, useful, enabled); opportunity || next != state {
+					t.Fatal("stalled continuation")
+				}
+			}
+			if next, opportunity := progressHandoff(state, mux.Pressure{}, 262144, 200000, enabled); opportunity || next != state {
+				t.Fatal("EOF continuation")
+			}
+			if next, opportunity := progressHandoff(state, mux.Pressure{Readable: 1}, 65536, 200000, enabled); opportunity || next != state {
+				t.Fatal("non-bulk continuation")
+			}
+		}
+	}
+}
+
 func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
 	module := &Transport{Profile: "continuous-bulk", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
 	if err := module.Provision(caddy.Context{}); err != nil {

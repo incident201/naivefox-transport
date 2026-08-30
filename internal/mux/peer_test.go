@@ -79,6 +79,24 @@ func TestQueuedDataDoesNotBypassCredit(t *testing.T) {
 	}
 }
 
+func TestReadablePressureExcludesFinishedAndResetStreams(t *testing.T) {
+	peer := New(nil)
+	defer peer.Close()
+	s := peer.newStream(1)
+	if peer.Pressure().Readable != 1 {
+		t.Fatal("readable")
+	}
+	s.localFinSent = true
+	if peer.Pressure().Readable != 0 {
+		t.Fatal("EOF")
+	}
+	s.localFinSent = false
+	s.reset = true
+	if peer.Pressure().Readable != 0 {
+		t.Fatal("reset")
+	}
+}
+
 func TestConfiguredWindowBoundsWithoutWriterProgress(t *testing.T) {
 	for _, window := range []uint32{0, cell.Window, 2 * cell.Window} {
 		peer, err := NewWithWindow(nil, window)

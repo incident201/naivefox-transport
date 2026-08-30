@@ -44,25 +44,27 @@ type Transport struct {
 }
 
 type counters struct {
-	CreditHintOpportunities uint64            `json:"credit_hint_opportunities"`
-	CreditHintPromotions    uint64            `json:"credit_hint_promotions"`
-	CellCapacities          map[string]uint64 `json:"cell_capacities,omitempty"`
-	IdleStarted             uint64            `json:"idle_started"`
-	IdleCompleted           uint64            `json:"idle_completed"`
-	IdleCancelled           uint64            `json:"idle_cancelled"`
-	WriteErrors             uint64            `json:"write_errors"`
-	Peers                   []mux.Stats       `json:"peers,omitempty"`
-	Requests                map[string]uint64 `json:"requests"`
-	Protocols               map[string]uint64 `json:"protocols"`
-	UploadBytes             uint64            `json:"upload_bytes"`
-	DownloadBytes           uint64            `json:"download_bytes"`
-	UploadFiller            uint64            `json:"upload_filler"`
-	DownloadFiller          uint64            `json:"download_filler"`
-	UploadUseful            uint64            `json:"upload_useful"`
-	DownloadUseful          uint64            `json:"download_useful"`
-	Opens                   uint64            `json:"opens"`
-	Rejected                uint64            `json:"rejected"`
-	Connect                 uint64            `json:"connect"`
+	ProgressHintOpportunities uint64            `json:"progress_hint_opportunities"`
+	ProgressHintPromotions    uint64            `json:"progress_hint_promotions"`
+	CreditHintOpportunities   uint64            `json:"credit_hint_opportunities"`
+	CreditHintPromotions      uint64            `json:"credit_hint_promotions"`
+	CellCapacities            map[string]uint64 `json:"cell_capacities,omitempty"`
+	IdleStarted               uint64            `json:"idle_started"`
+	IdleCompleted             uint64            `json:"idle_completed"`
+	IdleCancelled             uint64            `json:"idle_cancelled"`
+	WriteErrors               uint64            `json:"write_errors"`
+	Peers                     []mux.Stats       `json:"peers,omitempty"`
+	Requests                  map[string]uint64 `json:"requests"`
+	Protocols                 map[string]uint64 `json:"protocols"`
+	UploadBytes               uint64            `json:"upload_bytes"`
+	DownloadBytes             uint64            `json:"download_bytes"`
+	UploadFiller              uint64            `json:"upload_filler"`
+	DownloadFiller            uint64            `json:"download_filler"`
+	UploadUseful              uint64            `json:"upload_useful"`
+	DownloadUseful            uint64            `json:"download_useful"`
+	Opens                     uint64            `json:"opens"`
+	Rejected                  uint64            `json:"rejected"`
+	Connect                   uint64            `json:"connect"`
 }
 
 type session struct {
@@ -470,6 +472,14 @@ func downstreamState(pressure mux.Pressure, capacity int, useful uint64, preserv
 	return "idle", opportunity
 }
 
+func progressHandoff(state string, pressure mux.Pressure, capacity int, useful uint64, enabled bool) (string, bool) {
+	opportunity := state != "download" && capacity == 262144 && useful >= 131072 && pressure.Readable > 0
+	if enabled && opportunity {
+		return "download", true
+	}
+	return state, opportunity
+}
+
 func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) error {
 	s.mu.Lock()
 	frames := s.peer.Take(capacity - cell.Header)
@@ -504,6 +514,16 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 		pressure := s.peer.Pressure()
 		preserve := t.appProfile().Bulk && t.Profile != "continuous-bulk"
 		state, opportunity := downstreamState(pressure, base, useful, preserve)
+		var progress bool
+		state, progress = progressHandoff(state, pressure, base, useful, t.appProfile().ProgressHint)
+		if progress {
+			t.mu.Lock()
+			t.stats.ProgressHintOpportunities++
+			if t.appProfile().ProgressHint {
+				t.stats.ProgressHintPromotions++
+			}
+			t.mu.Unlock()
+		}
 		if opportunity {
 			t.mu.Lock()
 			t.stats.CreditHintOpportunities++
