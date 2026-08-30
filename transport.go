@@ -223,7 +223,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, asset := assetDefinition(path)
-	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk"
+	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk"
 	if !asset && !carrier {
 		return next.ServeHTTP(w, r)
 	}
@@ -262,12 +262,12 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 	s.mu.Lock()
-	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" {
+	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" {
 		capacity := 4096
 		if path == "/api/upload/chunk" {
 			capacity = 131072
 		}
-		if r.Method != "POST" {
+		if r.Method != "POST" || (path == "/api/action" && !t.appProfile().Commit) {
 			s.mu.Unlock()
 			t.reject(w)
 			return nil
@@ -325,10 +325,13 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.stats.UploadUseful += useful
 		t.stats.Opens += opens
 		t.mu.Unlock()
-		if t.appProfile().Duplex {
+		if t.appProfile().Duplex || path == "/api/action" {
 			down := 24576
 			if path == "/api/sync/media" {
 				down = t.appProfile().Down
+			}
+			if path == "/api/action" {
+				down = 4096
 			}
 			return t.downstream(w, s, down)
 		}

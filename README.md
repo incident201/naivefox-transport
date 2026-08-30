@@ -63,6 +63,13 @@ frame bounds in both buffered and streaming modes. This reduces a local delivery
 barrier, not the outer byte budget. It is opt-in and is not a proven large speed
 improvement. Idle/active state transitions remain a separate unsolved problem.
 
+`staged-commit20` adds one 4096-byte `/api/action` upload and 4096-byte response
+after the final render callback (48 total HTTP requests, 905216 downstream and
+86016 upload-body bytes). It passed initial admission but failed the subsequent
+H3 screen: a late inner completion request still lacked a slot. It is a recorded
+negative experiment, not a liveness fix. An ongoing application lifecycle is
+required before treating reduced finite profiles as a practical transport.
+
 ## Framing and limits
 
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,
@@ -101,7 +108,7 @@ windows, half-close and cancellation. Network captures and residual scores are
 recorded in NaiveFox's `APPLICATION-CARRIER.md`; unit tests do not establish
 camouflage quality or a default promotion.
 
-Run `node --test test/read-cell.test.js` for all response split points, strict
+Run `node --test test/*.test.js` for all response split points, strict
 framing, prefix-before-EOF, sink backpressure, tail truncation, append handling
 and cancellation. The WSL fixture's managed Node is
 `/root/.mozbuild/node/bin/node` when Node is not on PATH.

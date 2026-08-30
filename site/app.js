@@ -18,34 +18,42 @@ __NFC_READER__
     const view=new DataView(body.buffer);view.setUint32(4,sequence++);view.setUint32(8,16);view.setUint32(12,0);
     return body;
   }
+  async function sendSlot(capacity, endpoint) {
+    let body;
+    if(socket) { const request=new Uint8Array(5);request[0]=1;new DataView(request.buffer).setUint32(1,capacity);body=await ipc(request); }
+    else body=emptyCell(capacity);
+    return fetch(endpoint,{method:"POST",body,credentials:"same-origin"});
+  }
+  async function receiveSlot(response, capacity) {
+    if(!response.ok)throw new Error("events");
+    const early=await readCarrier(response,capacity,downloadSequence++,profile.streaming,async result=>{
+      if(socket){const message=new Uint8Array(result.length+1);message[0]=2;message.set(result,1);await ipc(message);}
+    });
+    if(early){window.__NFC_EARLY_CELLS__++;window.__NFC_EARLY_FILLER__+=early;}
+  }
   async function run() {
     if (running) return; running=true;window.__NFC_DONE__=false;window.__NFC_ERROR__=null;
     window.__NFC_EARLY_CELLS__=0;window.__NFC_EARLY_FILLER__=0;
+    window.__NFC_ACTION_DONE__=false;
     try {
       document.getElementById("progress").max=rounds;
       for(let round=0;round<rounds;round++) {
         const upload = params.get("upload")==="1";
         const capacity=upload?131072:4096;
-        let body;
-        if(socket) { const request=new Uint8Array(5);request[0]=1;new DataView(request.buffer).setUint32(1,capacity);body=await ipc(request); }
-        else body=emptyCell(capacity);
         const media=round>=2&&round<rounds-2;
         const endpoint=upload?"/api/upload/chunk":profile.duplex&&media?"/api/sync/media":"/api/sync";
-        const sent=await fetch(endpoint,{method:"POST",body,credentials:"same-origin"});
+        const sent=await sendSlot(capacity,endpoint);
         if(sent.status!==(profile.duplex?200:204))throw new Error("sync");
         const slot=profile.slots?profile.slots[round%profile.slots.length]:media?profile.down:24576;
         const path=slot===8192?"/api/events/brief":slot===32768?"/api/events/state":slot===24576?"/api/events":"/media/chunk/"+round;
         const response=profile.duplex?sent:await fetch(path,{credentials:"same-origin"});
-        if(!response.ok)throw new Error("events");
-        const early=await readCarrier(response,slot,downloadSequence++,profile.streaming,async result=>{
-          if(socket){const message=new Uint8Array(result.length+1);message[0]=2;message.set(result,1);await ipc(message);}
-        });
-        if(early){window.__NFC_EARLY_CELLS__++;window.__NFC_EARLY_FILLER__+=early;}
+        await receiveSlot(response,slot);
         chart.fillStyle=round%2?"#c0d69b":"#779989";chart.fillRect(round*640/rounds,120-(round+1)*100/rounds,640/rounds-2,(round+1)*100/rounds);
         document.getElementById("progress").value=round+1;status.textContent=`Archive segment ${round+1} of ${rounds}`;
         window.__NFC_ROUND__=round+1;
         if((round+1)%profile.paint_every===0||round===rounds-1)await new Promise(resolve=>requestAnimationFrame(resolve));
       }
+      if(profile.commit){await receiveSlot(await sendSlot(4096,"/api/action"),4096);window.__NFC_ACTION_DONE__=true;}
       status.textContent="Archive synchronized.";window.__NFC_DONE__=true;
     } catch (_) { if(socket)socket.close();status.textContent="Synchronization unavailable.";window.__NFC_ERROR__="application-or-transport"; }
     finally { running=false; }

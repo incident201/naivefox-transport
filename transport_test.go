@@ -87,7 +87,7 @@ func TestModuleRequiresAllowlist(t *testing.T) {
 }
 
 func TestFixedProfiles(t *testing.T) {
-	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120, "staged-stream20": 901120}
+	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120, "staged-stream20": 901120, "staged-commit20": 905216}
 	if len(budgets) != len(profiles) {
 		t.Fatal("every profile requires a frozen budget")
 	}
@@ -151,7 +151,17 @@ func TestFixedProfiles(t *testing.T) {
 					t.Fatalf("round %d capacity/sequence", round)
 				}
 			}
-			if module.stats.DownloadBytes != uint64(budgets[name]) || module.stats.UploadBytes != uint64(profile.Rounds*4096) || module.stats.Opens != 0 || module.stats.Rejected != 0 {
+			expectedUpload := profile.Rounds * 4096
+			if profile.Commit {
+				body, _ := cell.Encode(uint32(profile.Rounds), 4096, nil)
+				w := request("POST", "/api/action", body)
+				seq, frames, filler, err := cell.Decode(w.Body.Bytes())
+				if w.Code != 200 || w.Body.Len() != 4096 || seq != uint32(profile.Rounds) || err != nil || len(frames) != 0 || filler != 4080 {
+					t.Fatal("terminal confirmation")
+				}
+				expectedUpload += 4096
+			}
+			if module.stats.DownloadBytes != uint64(budgets[name]) || module.stats.UploadBytes != uint64(expectedUpload) || module.stats.Opens != 0 || module.stats.Rejected != 0 {
 				t.Fatal("empty visitor budget or authorization")
 			}
 		})
