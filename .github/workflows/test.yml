@@ -1,0 +1,35 @@
+name: Test transport
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOCACHE: ${{ github.workspace }}/artifacts/go-build-cache
+      GOMODCACHE: ${{ github.workspace }}/artifacts/go-module-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.12'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Go race tests
+        run: bash tools/go.sh go test -race ./...
+      - name: Browser protocol tests
+        run: node --test test/*.test.js
+      - name: Build both Caddy modules
+        run: |
+          GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6
+          XCADDY="$PWD/artifacts/bin/xcaddy" bash tools/build.sh
+      - name: Verify TLS cohosting with the actual binary
+        run: NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .

@@ -30,6 +30,7 @@ bash tools/go.sh go test -race ./...
 node --test test/*.test.js
 bash tools/build.sh
 ./artifacts/bin/caddy list-modules
+NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .
 ```
 
 `tools/build.sh` builds the optional laboratory bridge and a single Caddy binary
@@ -55,6 +56,33 @@ xcaddy build v2.11.2 \
 Pin the module to a reviewed commit in deployment automation. The module's own
 Go dependencies follow the selected Caddy version; they do not enter the lean
 C++ client build graph.
+
+## Serve classic and no-connect together
+
+Use [examples/Caddyfile](examples/Caddyfile) with the combined binary. Set the
+five environment variables shown there: server hostname, no-connect key, exact
+target allowlist, classic username, and classic password. Generate a separate
+random no-connect key, for example with `openssl rand -hex 32`; protect the
+environment file and do not commit it. Then validate and start the configuration:
+
+```sh
+./artifacts/bin/caddy validate --adapter caddyfile --config examples/Caddyfile
+./artifacts/bin/caddy run --adapter caddyfile --config examples/Caddyfile
+```
+
+The explicit `route` order matters. The first handler serves `/` and its
+application routes, while classic CONNECT passes through to `forward_proxy`.
+The last handler returns 404 for other paths. The root HTML also remains
+available to the classic client's H3 startup request. Forwardproxy's own ACL
+and credentials still apply to classic. Do not put a compression handler around
+the no-connect carrier routes.
+
+The native client requires `X-App-Profile: continuous-bulk-pipeline` on the
+initial `GET /` response before it sends AUTH. This header is emitted only for
+the root handshake, reports the resolved profile even when configuration omits
+it, and prevents accidental use of a different credit window. Older experimental
+server binaries without the header must be upgraded for native no-connect.
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 
 ## Configuration and limits
 
@@ -87,6 +115,11 @@ errors.
 ## Maintenance
 
 Keep wire-format, profile, flow-control and routing changes covered by tests.
+The CI workflow runs both suites, builds the combined binary, and runs the
+TLS cohosting test. That test loads the checked-in Caddyfile, validates a local
+certificate without insecure TLS, exchanges no-connect frames over HTTP/2,
+and keeps a classic CONNECT tunnel alive through the same Caddy process.
+
 Go race tests exercise framing, authorization, replay rejection, concurrent
 streams, both laboratory proxy frontends, transfers larger than the credit
 window, half-close and cancellation. JavaScript tests retain browser lifecycle

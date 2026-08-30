@@ -264,6 +264,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 				t.reject(w)
 				return nil
 			}
+			// The native client must reject a different profile before sending
+			// authentication or opening streams: receive windows are not negotiated.
+			w.Header().Set("X-App-Profile", t.profileName())
 		}
 		body, mime, err := assetBody(path, t.appProfile())
 		if err != nil {

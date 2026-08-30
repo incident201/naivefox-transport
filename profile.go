@@ -71,10 +71,13 @@ var profiles = func() map[string]appProfile {
 	return values
 }()
 
-func (t *Transport) appProfile() appProfile {
-	name := t.Profile
-	if name == "" {
-		name = defaultProfile
+func (t *Transport) profileName() string {
+	if t.Profile == "" {
+		return defaultProfile
 	}
-	return profiles[name]
+	return t.Profile
+}
+
+func (t *Transport) appProfile() appProfile {
+	return profiles[t.profileName()]
 }
