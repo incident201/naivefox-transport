@@ -107,7 +107,7 @@ __NFC_LIFECYCLE__
         idle,
         exchange:async state=>{
           manualWake=false;
-          const hint=await activeExchange({send:sendSlot,receive:receiveSlot,fetch:path=>fetch(path,{credentials:"same-origin"})},state,profile.live_duplex);
+          const hint=await activeExchange({send:sendSlot,receive:receiveSlot,fetch:path=>fetch(path,{credentials:"same-origin"})},state,profile.live_duplex||(state==="bulk"&&profile.bulk_duplex));
           window.__NFC_DYNAMIC_ROUNDS__++;return hint;
         },
       },wake,profile.lease_slots,profile.bulk);

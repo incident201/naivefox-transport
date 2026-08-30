@@ -79,3 +79,47 @@ func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
 		t.Fatal("profile isolation")
 	}
 }
+
+func TestBulkDuplexKeepsOtherStatesUnchanged(t *testing.T) {
+	module := &Transport{Profile: "continuous-bulk-duplex", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
+	if err := module.Provision(caddy.Context{}); err != nil {
+		t.Fatal(err)
+	}
+	defer module.Cleanup()
+	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { w.WriteHeader(404); return nil })
+	root := httptest.NewRecorder()
+	module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+	cookie := root.Result().Cookies()[0]
+	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+		r.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		if err := module.ServeHTTP(w, r, next); err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	body, _ := cell.Encode(0, 16384, []cell.Frame{{Kind: cell.Auth, Body: []byte(module.Key)}})
+	if request("POST", "/api/sync/bulk", body[:len(body)-1]).Code != 400 || request("GET", "/api/sync/bulk", nil).Code != 400 {
+		t.Fatal("invalid upload")
+	}
+	reply := request("POST", "/api/sync/bulk", body)
+	seq, _, _, err := cell.Decode(reply.Body.Bytes())
+	if reply.Code != 200 || reply.Body.Len() != 262144 || err != nil || seq != 0 {
+		t.Fatal("bulk response")
+	}
+	if request("POST", "/api/sync/bulk", body).Code != 400 {
+		t.Fatal("replay")
+	}
+	if request("GET", "/api/data/bulk", nil).Code != 404 {
+		t.Fatal("duplicate bulk path")
+	}
+	body, _ = cell.Encode(1, 4096, nil)
+	if request("POST", "/api/sync", body).Code != 204 {
+		t.Fatal("interactive post changed")
+	}
+	reply = request("GET", "/api/data/interactive", nil)
+	if reply.Code != 200 || reply.Body.Len() != 8192 {
+		t.Fatal("interactive response changed")
+	}
+}

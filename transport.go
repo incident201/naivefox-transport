@@ -232,7 +232,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, asset := assetDefinition(path)
-	bulk := t.appProfile().Bulk && (path == "/api/sync/bulk" || path == "/api/data/bulk")
+	bulk := t.appProfile().Bulk && (path == "/api/sync/bulk" || (path == "/api/data/bulk" && !t.appProfile().BulkDuplex))
 	exchange := t.appProfile().LiveDuplex && (path == "/api/exchange/interactive" || path == "/api/exchange/download" || path == "/api/exchange/upload" || path == "/api/exchange/mixed")
 	continuousPath := path == "/api/events/idle" || path == "/api/data/interactive" || path == "/api/data/download" || path == "/api/data/upload" || path == "/api/data/mixed"
 	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk" || (t.appProfile().Continuous && continuousPath)
@@ -370,7 +370,8 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.stats.UploadUseful += useful
 		t.stats.Opens += opens
 		t.mu.Unlock()
-		if t.appProfile().Duplex || path == "/api/action" || exchange {
+		bulkDuplex := t.appProfile().BulkDuplex && path == "/api/sync/bulk"
+		if t.appProfile().Duplex || path == "/api/action" || exchange || bulkDuplex {
 			down := 24576
 			if path == "/api/sync/media" {
 				down = t.appProfile().Down
@@ -383,6 +384,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 				if path == "/api/exchange/download" || path == "/api/exchange/mixed" {
 					down = 65536
 				}
+			}
+			if bulkDuplex {
+				down = 262144
 			}
 			return t.downstream(w, s, down)
 		}
@@ -491,7 +495,7 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	t.mu.Unlock()
 	if t.appProfile().Continuous {
 		pressure := s.peer.Pressure()
-		preserve := t.Profile == "continuous-bulk-ready" || t.Profile == "continuous-bulk-frames"
+		preserve := t.appProfile().Bulk && t.Profile != "continuous-bulk"
 		state, opportunity := downstreamState(pressure, base, useful, preserve)
 		if opportunity {
 			t.mu.Lock()

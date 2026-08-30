@@ -128,6 +128,13 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-duplex` independently tests one 16-KiB POST-200 with a
+256-KiB response at `/api/sync/bulk`, replacing the bulk-ready POST-204/GET pair.
+Other states, credit hints and buffered delivery are unchanged. Unlike the
+earlier continuous-sync profiles, upload and interactive slots are not combined.
+The separate bulk GET is unavailable in this profile; request and body counters
+must match the declared one-request lease. This is not yet a preferred profile.
+
 `continuous-bulk-ready` isolates a server-state hint experiment on top of bulk.
 After sending at least 128 KiB useful data in a 256-KiB cell, queued backlog
 of at least 32 KiB may preserve one download hint even if currently sendable

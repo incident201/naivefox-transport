@@ -22,6 +22,16 @@ test("combined active exchanges retain exact capacities without a second HTTP re
   }
 });
 
+test("selective bulk duplex retains capacity and avoids only the bulk GET", async () => {
+  const reply={status:200};let sent=0;
+  const hint=await activeExchange({
+    send:async(capacity,path)=>{sent++;assert.equal(capacity,16384);assert.equal(path,"/api/sync/bulk");return reply;},
+    fetch:()=>assert.fail("extra GET"),
+    receive:async(response,capacity)=>{assert.equal(response,reply);assert.equal(capacity,262144);return "download";},
+  },"bulk",true);
+  assert.equal(sent,1);assert.equal(hint,"download");
+});
+
 test("failed active exchange cannot silently consume a downstream slot", async () => {
   for (const duplex of [false, true]) {
     await assert.rejects(activeExchange({send: async () => ({status: 400}), fetch() { assert.fail(); }, receive() { assert.fail(); }}, "interactive", duplex), /active sync/);
