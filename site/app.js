@@ -7,12 +7,13 @@ __NFC_LIFECYCLE__
   const rounds = Math.max(12, Math.min(256, Number(params.get("rounds")) || profile.rounds));
   let socket, pending, sequence = 0, downloadSequence = 0, running = false;
   const wake = new WakeLatch();
+  const deliveryFence = new DeliveryFence();
   let manualWake = false, bridgeClosed = false;
   const chart = document.getElementById("chart").getContext("2d");
   const status = document.getElementById("status");
   function ipc(body) {
     if (pending) throw new Error("ipc overlap");
-    return new Promise((resolve, reject) => { pending = {resolve, reject}; socket.send(body); });
+    return new Promise((resolve, reject) => { pending = {resolve, reject}; socket.send(body); }).then(value=>{deliveryFence.acknowledge();return value;});
   }
   function emptyCell(capacity) {
     const body = new Uint8Array(capacity);
@@ -33,7 +34,13 @@ __NFC_LIFECYCLE__
     const streaming=profile.streaming==="frames"?framing&&"frames":profile.streaming;
     const early=await readCarrier(response,capacity,downloadSequence++,streaming,async (result,fragment)=>{
       if(framing){window.__NFC_FRAME_PARTS__++;if(fragment.remaining>0)window.__NFC_EARLY_FRAME_PARTS__++;}
-      if(socket){const message=new Uint8Array(result.length+(framing?2:1));message[0]=framing?6:2;if(framing)message[1]=Number(fragment.final);message.set(result,framing?2:1);await ipc(message);}
+      if(socket){
+        const deferAck=profile.deferred_ack&&!framing&&window.__NFC_PHASE__!=="startup";
+        const message=new Uint8Array(result.length+(framing?2:1));message[0]=framing?6:deferAck?7:2;
+        if(framing)message[1]=Number(fragment.final);message.set(result,framing?2:1);
+        if(deferAck){if(pending)throw new Error("delivery during ipc");deliveryFence.send(socket,message);window.__NFC_DEFERRED_DELIVERIES__++;}
+        else await ipc(message);
+      }
     });
     if(early){if(framing)window.__NFC_FRAME_BYTES_PENDING__+=early;else{window.__NFC_EARLY_CELLS__++;window.__NFC_EARLY_FILLER__+=early;}}
     const state=response.headers.get("X-App-State")||"idle";
@@ -78,6 +85,7 @@ __NFC_LIFECYCLE__
     if (running) return; running=true;window.__NFC_DONE__=false;window.__NFC_ERROR__=null;
     window.__NFC_EARLY_CELLS__=0;window.__NFC_EARLY_FILLER__=0;
     window.__NFC_FRAME_PARTS__=0;window.__NFC_EARLY_FRAME_PARTS__=0;window.__NFC_FRAME_BYTES_PENDING__=0;
+    window.__NFC_DEFERRED_DELIVERIES__=0;
     window.__NFC_ACTION_DONE__=false;
     window.__NFC_PHASE__="startup";window.__NFC_ALIVE__=true;window.__NFC_DYNAMIC_ROUNDS__=0;window.__NFC_IDLE_POLLS__=0;window.__NFC_IDLE_WAKE_POSTS__=0;
     try {

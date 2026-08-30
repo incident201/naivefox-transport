@@ -2,7 +2,19 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const {WakeLatch, activityState, runLifecycle, activeExchange} = require("../site/lifecycle.js");
+const {DeliveryFence, WakeLatch, activityState, runLifecycle, activeExchange} = require("../site/lifecycle.js");
+
+test("deferred delivery permits one cell until the next ordered command reply", () => {
+  const fence=new DeliveryFence(),sent=[];
+  const socket={send:body=>sent.push(body)};
+  fence.send(socket,new Uint8Array(262145));
+  assert.throws(()=>fence.send(socket,new Uint8Array(17)),/bound/);
+  assert.equal(sent.length,1);
+  fence.acknowledge();
+  fence.send(socket,new Uint8Array(17));
+  assert.equal(sent.length,2);
+  assert.equal(fence.pending,true);
+});
 
 test("combined active exchanges retain exact capacities without a second HTTP request", async () => {
   for (const state of ["interactive", "download", "upload", "mixed"]) {

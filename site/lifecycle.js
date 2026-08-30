@@ -1,5 +1,15 @@
 "use strict";
 
+class DeliveryFence {
+  constructor() { this.pending = false; }
+  send(socket, body) {
+    if (this.pending) throw new Error("unacknowledged delivery bound");
+    this.pending = true;
+    socket.send(body);
+  }
+  acknowledge() { this.pending = false; }
+}
+
 class WakeLatch {
   constructor() { this.version = 0; this.pending = null; }
   notify() {
@@ -51,4 +61,4 @@ async function activeExchange(io, state, duplex) {
   return io.receive(duplex ? sent : await io.fetch("/api/data/" + state), capacity);
 }
 
-if (typeof module !== "undefined") module.exports = {WakeLatch, activityState, runLifecycle, activeExchange};
+if (typeof module !== "undefined") module.exports = {DeliveryFence, WakeLatch, activityState, runLifecycle, activeExchange};

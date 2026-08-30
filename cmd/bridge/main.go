@@ -169,7 +169,10 @@ func run(path string) error {
 					return
 				}
 				uploadSequence++
-			case 2:
+			case 2, 7:
+				if body[0] == 7 && !cfg.Continuous {
+					return
+				}
 				seq, frames, _, err := cell.Decode(body[1:])
 				if err != nil || seq != downloadSequence {
 					return
@@ -177,6 +180,11 @@ func run(path string) error {
 				downloadSequence++
 				if err := peer.Receive(frames); err != nil {
 					return
+				}
+				// The next ordered pressure/take reply is the delivery fence.
+				// Credits still come only from successful local socket writes.
+				if body[0] == 7 {
+					continue
 				}
 				reply = []byte{3}
 			case 6:

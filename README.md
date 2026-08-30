@@ -128,6 +128,15 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-noack` retains bulk-duplex and defers active/idle local
+delivery ACKs to the next already-required ordered pressure/take response.
+Local opcode 7 decodes/delivers a whole cell without a standalone reply. A
+client fence permits only one unacknowledged cell; no following cell may be
+delivered until a command reply clears it. Startup and all outer requests/body
+capacities are unchanged. Decoder errors close the connection; actual local
+socket writes still govern credit. This is private-loopback IPC optimization,
+not earlier local SOCKS success or optimistic target delivery.
+
 Two independent lease ablations retain bulk-duplex behavior:
 `continuous-bulk-interactive1` rechecks state after one interactive slot;
 `continuous-bulk-upload1` rechecks after one upload slot. They keep the other
