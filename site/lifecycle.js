@@ -38,4 +38,13 @@ async function runLifecycle(io, wake) {
   }
 }
 
-if (typeof module !== "undefined") module.exports = {WakeLatch, activityState, runLifecycle};
+async function activeExchange(io, state, duplex) {
+  const uploading = state === "upload" || state === "mixed";
+  const capacity = state === "download" || state === "mixed" ? 65536 : 8192;
+  const endpoint = duplex ? "/api/exchange/" + state : uploading ? "/api/upload/chunk" : "/api/sync";
+  const sent = await io.send(uploading ? 131072 : 4096, endpoint);
+  if (sent.status !== (duplex ? 200 : 204)) throw new Error("active sync");
+  return io.receive(duplex ? sent : await io.fetch("/api/data/" + state), capacity);
+}
+
+if (typeof module !== "undefined") module.exports = {WakeLatch, activityState, runLifecycle, activeExchange};

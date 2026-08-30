@@ -230,9 +230,10 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, asset := assetDefinition(path)
+	exchange := t.appProfile().LiveDuplex && (path == "/api/exchange/interactive" || path == "/api/exchange/download" || path == "/api/exchange/upload" || path == "/api/exchange/mixed")
 	continuousPath := path == "/api/events/idle" || path == "/api/data/interactive" || path == "/api/data/download" || path == "/api/data/upload" || path == "/api/data/mixed"
 	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk" || (t.appProfile().Continuous && continuousPath)
-	if !asset && !carrier {
+	if !asset && !carrier && !exchange {
 		return next.ServeHTTP(w, r)
 	}
 	t.mu.Lock()
@@ -296,9 +297,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return err
 	}
 	s.mu.Lock()
-	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" {
+	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" || exchange {
 		capacity := 4096
-		if path == "/api/upload/chunk" {
+		if path == "/api/upload/chunk" || path == "/api/exchange/upload" || path == "/api/exchange/mixed" {
 			capacity = 131072
 		}
 		if r.Method != "POST" || (path == "/api/action" && !t.appProfile().Commit) {
@@ -363,13 +364,19 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.stats.UploadUseful += useful
 		t.stats.Opens += opens
 		t.mu.Unlock()
-		if t.appProfile().Duplex || path == "/api/action" {
+		if t.appProfile().Duplex || path == "/api/action" || exchange {
 			down := 24576
 			if path == "/api/sync/media" {
 				down = t.appProfile().Down
 			}
 			if path == "/api/action" {
 				down = 4096
+			}
+			if exchange {
+				down = 8192
+				if path == "/api/exchange/download" || path == "/api/exchange/mixed" {
+					down = 65536
+				}
 			}
 			return t.downstream(w, s, down)
 		}

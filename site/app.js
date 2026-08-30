@@ -102,12 +102,8 @@ __NFC_LIFECYCLE__
         state:value=>{window.__NFC_PHASE__=value;status.textContent=value==="idle"?"Waiting for updates.":"Synchronizing updates.";},
         idle,
         exchange:async state=>{
-          const uploading=state==="upload"||state==="mixed";
           manualWake=false;
-          const sent=await sendSlot(uploading?131072:4096,uploading?"/api/upload/chunk":"/api/sync");
-          if(sent.status!==204)throw new Error("active sync");
-          const capacity=state==="download"||state==="mixed"?65536:8192;
-          const hint=await receiveSlot(await fetch("/api/data/"+state,{credentials:"same-origin"}),capacity);
+          const hint=await activeExchange({send:sendSlot,receive:receiveSlot,fetch:path=>fetch(path,{credentials:"same-origin"})},state,profile.live_duplex);
           window.__NFC_DYNAMIC_ROUNDS__++;return hint;
         },
       },wake);

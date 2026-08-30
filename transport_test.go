@@ -90,7 +90,7 @@ func TestModuleRequiresAllowlist(t *testing.T) {
 }
 
 func TestFixedProfiles(t *testing.T) {
-	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120, "staged-stream20": 901120, "staged-commit20": 905216, "continuous-v1": 901120}
+	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120, "staged-stream20": 901120, "staged-commit20": 905216, "continuous-v1": 901120, "continuous-sync": 901120}
 	if len(budgets) != len(profiles) {
 		t.Fatal("every profile requires a frozen budget")
 	}

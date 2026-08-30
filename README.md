@@ -105,6 +105,14 @@ capacity counters, write errors and cancellation counts support exact accounting
 The source-branch journal contains liveness, idle and performance results;
 this remains a full-browser prototype, not a lean-runtime or production default.
 
+The optional `continuous-sync` variant preserves that startup and idle behavior,
+but each active slot is one POST `/api/exchange/{state}` with a fixed 200 response,
+instead of POST-204 followed by GET. Both body capacities and the four-slot lease
+remain unchanged. The same authentication, ordering, credits and cancellation
+apply. This isolates active HTTP turnaround cost; it is not a larger body budget
+or a speculative concurrent stream. See the source-branch journal for paired
+speed/traffic admission before treating it as a preferred experiment profile.
+
 ## Framing and limits
 
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,

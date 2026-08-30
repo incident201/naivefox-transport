@@ -2,7 +2,31 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const {WakeLatch, activityState, runLifecycle} = require("../site/lifecycle.js");
+const {WakeLatch, activityState, runLifecycle, activeExchange} = require("../site/lifecycle.js");
+
+test("combined active exchanges retain exact capacities without a second HTTP request", async () => {
+  for (const state of ["interactive", "download", "upload", "mixed"]) {
+    for (const duplex of [false, true]) {
+      const requests = [], reply = {status: duplex ? 200 : 204}, fetched = {};
+      const uploading = state === "upload" || state === "mixed";
+      const down = state === "download" || state === "mixed" ? 65536 : 8192;
+      const result = await activeExchange({
+        send: async (capacity, path) => { requests.push([capacity, path]); return reply; },
+        fetch: async path => { requests.push(path); return fetched; },
+        receive: async (response, capacity) => { assert.equal(response, duplex ? reply : fetched); assert.equal(capacity, down); return "idle"; },
+      }, state, duplex);
+      assert.equal(result, "idle");
+      assert.equal(requests.length, duplex ? 1 : 2);
+      assert.deepEqual(requests[0], [uploading ? 131072 : 4096, duplex ? "/api/exchange/" + state : uploading ? "/api/upload/chunk" : "/api/sync"]);
+    }
+  }
+});
+
+test("failed active exchange cannot silently consume a downstream slot", async () => {
+  for (const duplex of [false, true]) {
+    await assert.rejects(activeExchange({send: async () => ({status: 400}), fetch() { assert.fail(); }, receive() { assert.fail(); }}, "interactive", duplex), /active sync/);
+  }
+});
 
 test("activity states select fixed classes, not a byte-exact response size", () => {
   assert.equal(activityState({bytes: 0, controls: 0}, "idle"), "idle");
