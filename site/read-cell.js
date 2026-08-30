@@ -37,6 +37,45 @@ async function readCarrier(response, capacity, sequence, streaming, deliver) {
     await deliver(body);
     return 0;
   }
+  if (streaming === "frames") {
+    const reader = response.body.getReader();
+    const prefix = new Uint8Array(capacity);
+    let received = 0, used = 0, offset = 16, parsed = 0, sent = 0, earlyBytes = 0;
+    try {
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        if (received + value.length > length) throw new Error("cell body overflow");
+        if (received < capacity) prefix.set(value.subarray(0, capacity - received), received);
+        received += value.length;
+        if (!used && received >= 16) used = usedLength(prefix);
+        if (!used) continue;
+        const view = new DataView(prefix.buffer);
+        const count = view.getUint16(12);
+        while (parsed < count && offset + 16 <= Math.min(received, used)) {
+          const size = view.getUint32(offset + 12);
+          if (prefix[offset] < 1 || prefix[offset] > 7 || prefix[offset+1] || prefix[offset+2] || prefix[offset+3] || offset + 16 + size > used) throw new Error("cell frame");
+          if (offset + 16 + size > received) break;
+          offset += 16 + size;
+          parsed++;
+        }
+        if (received >= used && (offset !== used || parsed !== count)) throw new Error("cell frame count");
+        // Batch whatever complete frames this read supplied; no waiting for
+        // another network chunk or timer. Filler never enters local IPC.
+        if (offset > 16 && offset > sent) {
+          await deliver(prefix.subarray(sent, offset), {final: false, remaining: Math.max(0, used - received)});
+          if (!sent) earlyBytes = Math.max(0, used - received);
+          sent = offset;
+        }
+      }
+      if (!used || received !== length || offset !== used || parsed !== new DataView(prefix.buffer).getUint16(12)) throw new Error("cell body truncated");
+      await deliver(prefix.subarray(sent, used), {final: true, remaining: 0});
+      return earlyBytes;
+    } catch (error) {
+      await reader.cancel().catch(() => {});
+      throw error;
+    } finally { reader.releaseLock(); }
+  }
   const reader = response.body.getReader();
   const prefix = new Uint8Array(capacity);
   let received = 0, used = 0, delivered = false, earlyBytes = 0;

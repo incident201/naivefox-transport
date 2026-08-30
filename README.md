@@ -140,7 +140,19 @@ Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,
 frame count and reserved zeros. Frames have a 16-byte header: type, reserved
 zeros, stream ID, byte sequence, payload length. Types are OPEN, DATA, FIN,
 RESET, CREDIT, AUTH and OPENED. Used length excludes filler. Whole-cell framing
-and strict per-direction sequence checks precede dispatch.
+and strict per-direction sequence checks precede dispatch, except for the
+explicit incremental experiment below.
+
+`continuous-bulk-frames` keeps bulk-ready capacities and state hints but
+delivers complete logical frames from a 256-KiB response as they arrive.
+Other responses, including startup, keep buffered delivery. Local IPC opcode
+6 carries ordered used-prefix fragments and a final marker; the bridge keeps
+one decoder of at most 256 KiB and forbids interleaved commands. Cell sequence
+advances only on finalization after Firefox validates full HTTP EOF, including
+filler. Every complete frame is checked before dispatch and still obeys mux
+credit/byte-sequence bounds. Malformed later data or truncated filler closes
+the peer, but cannot retract already-delivered bytes. Filler stays out of the
+incremental local IPC, without changing any outer body length or request.
 
 Only the first authenticated upload can provide AUTH. A random secure HTTP-only
 session cookie plus peer IP binds the session; source ports are not identity.

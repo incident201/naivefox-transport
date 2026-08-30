@@ -127,6 +127,7 @@ func run(path string) error {
 		}
 		conn.SetReadLimit(cell.MaxCell + 5)
 		var uploadSequence, downloadSequence uint32
+		var partial *cell.StreamDecoder
 		authSent := false
 		for {
 			kind, body, err := conn.ReadMessage()
@@ -137,6 +138,9 @@ func run(path string) error {
 				return
 			}
 			var reply []byte
+			if partial != nil && body[0] != 6 {
+				return
+			}
 			switch body[0] {
 			case 1:
 				if len(body) != 5 {
@@ -173,6 +177,22 @@ func run(path string) error {
 				downloadSequence++
 				if err := peer.Receive(frames); err != nil {
 					return
+				}
+				reply = []byte{3}
+			case 6:
+				if !cfg.Continuous || len(body) < 2 || body[1] > 1 {
+					return
+				}
+				if partial == nil {
+					partial = cell.NewStreamDecoder(downloadSequence)
+				}
+				frames, err := partial.Push(body[2:], body[1] == 1)
+				if err != nil || peer.Receive(frames) != nil {
+					return
+				}
+				if body[1] == 1 {
+					partial = nil
+					downloadSequence++
 				}
 				reply = []byte{3}
 			case 5:

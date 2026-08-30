@@ -491,7 +491,7 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	t.mu.Unlock()
 	if t.appProfile().Continuous {
 		pressure := s.peer.Pressure()
-		preserve := t.Profile == "continuous-bulk-ready"
+		preserve := t.Profile == "continuous-bulk-ready" || t.Profile == "continuous-bulk-frames"
 		state, opportunity := downstreamState(pressure, base, useful, preserve)
 		if opportunity {
 			t.mu.Lock()

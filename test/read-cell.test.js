@@ -153,3 +153,70 @@ test("sink failure cancels the unread response", async () => {
   await assert.rejects(readCarrier(response(stream, 128), 128, 7, true, async () => { throw new Error("sink failed"); }), /sink failed/);
   assert.equal(cancelled, true);
 });
+
+function twoFrames() {
+  const body = cell(256);
+  const view = new DataView(body.buffer);
+  view.setUint32(8, 62); view.setUint16(12, 2);
+  body.set(body.slice(16,39),39);
+  view.setUint32(47,7);
+  return body;
+}
+
+test("frame mode delivers before the remaining useful frame and drains filler before final", async () => {
+  const body = twoFrames();
+  let controller, firstReady, release, ended = false;
+  const first = new Promise(resolve => { firstReady=resolve; });
+  const sink = new Promise(resolve => { release=resolve; });
+  const parts=[];
+  const stream = new ReadableStream({start(value){controller=value;}});
+  const run=readCarrier(response(stream,256,256),256,7,"frames",async (part,meta)=>{
+    parts.push({part:part.slice(),meta});
+    if(parts.length===1){firstReady();await sink;}
+  }).then(value=>{ended=true;return value;});
+  controller.enqueue(body.slice(0,39));
+  await first;
+  assert.equal(parts[0].meta.remaining,23);
+  assert.equal(parts[0].meta.final,false);
+  controller.enqueue(body.slice(39,62));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(parts.length,1);
+  release();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(parts.length,2);
+  assert.equal(ended,false);
+  controller.enqueue(body.slice(62));controller.close();
+  assert.equal(await run,23);
+  assert.equal(parts.at(-1).meta.final,true);
+  assert.equal(parts.at(-1).part.length,0);
+  assert.deepEqual(Buffer.concat(parts.map(value=>Buffer.from(value.part))),Buffer.from(body.slice(0,62)));
+});
+
+test("frame mode accepts every split, rejects malformed tails and never finalizes truncated filler", async () => {
+  const body=twoFrames();
+  for(let split=1;split<body.length;split++){
+    const parts=[];let finals=0;
+    const stream=new ReadableStream({start(c){c.enqueue(body.slice(0,split));c.enqueue(body.slice(split));c.close();}});
+    await readCarrier(response(stream,256,256),256,7,"frames",async(part,meta)=>{parts.push(Buffer.from(part));finals+=Number(meta.final);});
+    assert.deepEqual(Buffer.concat(parts),Buffer.from(body.slice(0,62)));assert.equal(finals,1);
+  }
+  for(const mutate of [b=>{b[39]=9;},b=>{b[40]=1;},b=>{b[54]=255;},b=>{b[13]=3;}]){
+    const bad=body.slice();mutate(bad);
+    await assert.rejects(readCarrier(response(bad,256,256),256,7,"frames",async()=>{}));
+  }
+  let final=false;
+  await assert.rejects(readCarrier(response(body.slice(0,62),256,256),256,7,"frames",async(_,meta)=>{final ||= meta.final;}),/truncated/);
+  assert.equal(final,false);
+  const empty=new Uint8Array(256);const view=new DataView(empty.buffer);
+  view.setUint32(0,0x4e464331);view.setUint32(4,7);view.setUint32(8,16);
+  let calls=0;
+  await readCarrier(response(empty,256,256),256,7,"frames",async(part,meta)=>{calls++;assert.equal(part.length,16);assert.equal(meta.final,true);});
+  assert.equal(calls,1);
+});
+
+test("frame sink failure cancels the unread useful remainder", async()=>{
+  let cancelled=false;
+  const stream=new ReadableStream({start(c){c.enqueue(twoFrames().slice(0,39));},cancel(){cancelled=true;}});
+  await assert.rejects(readCarrier(response(stream,256,256),256,7,"frames",async()=>{throw new Error("sink");}),/sink/);
+  assert.equal(cancelled,true);
+});

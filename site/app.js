@@ -29,10 +29,13 @@ __NFC_LIFECYCLE__
   }
   async function receiveSlot(response, capacity) {
     if(!response.ok)throw new Error("events");
-    const early=await readCarrier(response,capacity,downloadSequence++,profile.streaming,async result=>{
-      if(socket){const message=new Uint8Array(result.length+1);message[0]=2;message.set(result,1);await ipc(message);}
+    const framing=profile.streaming==="frames"&&capacity===262144;
+    const streaming=profile.streaming==="frames"?framing&&"frames":profile.streaming;
+    const early=await readCarrier(response,capacity,downloadSequence++,streaming,async (result,fragment)=>{
+      if(framing){window.__NFC_FRAME_PARTS__++;if(fragment.remaining>0)window.__NFC_EARLY_FRAME_PARTS__++;}
+      if(socket){const message=new Uint8Array(result.length+(framing?2:1));message[0]=framing?6:2;if(framing)message[1]=Number(fragment.final);message.set(result,framing?2:1);await ipc(message);}
     });
-    if(early){window.__NFC_EARLY_CELLS__++;window.__NFC_EARLY_FILLER__+=early;}
+    if(early){if(framing)window.__NFC_FRAME_BYTES_PENDING__+=early;else{window.__NFC_EARLY_CELLS__++;window.__NFC_EARLY_FILLER__+=early;}}
     const state=response.headers.get("X-App-State")||"idle";
     if(!["idle","interactive","download"].includes(state))throw new Error("remote state");
     return state;
@@ -74,6 +77,7 @@ __NFC_LIFECYCLE__
   async function run() {
     if (running) return; running=true;window.__NFC_DONE__=false;window.__NFC_ERROR__=null;
     window.__NFC_EARLY_CELLS__=0;window.__NFC_EARLY_FILLER__=0;
+    window.__NFC_FRAME_PARTS__=0;window.__NFC_EARLY_FRAME_PARTS__=0;window.__NFC_FRAME_BYTES_PENDING__=0;
     window.__NFC_ACTION_DONE__=false;
     window.__NFC_PHASE__="startup";window.__NFC_ALIVE__=true;window.__NFC_DYNAMIC_ROUNDS__=0;window.__NFC_IDLE_POLLS__=0;window.__NFC_IDLE_WAKE_POSTS__=0;
     try {
