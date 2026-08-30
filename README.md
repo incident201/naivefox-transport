@@ -41,6 +41,19 @@ The root is ASCII for admission by the existing lean H3 control. The append
 ablation is selected by private server/bridge configuration, not by a different
 wire URL: every outer navigation requests exactly `/`.
 
+The private `profile` configuration selects preregistered cost experiments;
+omission remains `v1`. `duplex-v1` returns the fixed downstream cell in each
+POST response. `compact*` reduces media cells to 64 KiB with explicit 16/20
+round and animation-cadence variants. `staged*` moves capacity out of startup
+and tail slots: four 8-KiB, two 32-KiB, ten (18 rounds) or twelve (20 rounds)
+64-KiB, then two 8-KiB responses. `staged-fast20` has 901120 downstream bytes
+and 81920 upload bytes; it waits for animation every second round. All visitors
+receive the same selected profile in the still-24576-byte script. The brief
+and state endpoints are `/api/events/brief` and `/api/events/state`.
+Failed profiles remain named to reproduce failures, not as recommended modes.
+These finite jobs can exhaust capacity before a workload finishes. Reducing
+filler for one workload does not qualify arbitrary size, rate or session length.
+
 ## Framing and limits
 
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -30,6 +31,7 @@ var site embed.FS
 func init() { caddy.RegisterModule(Transport{}) }
 
 type Transport struct {
+	Profile        string   `json:"profile,omitempty"`
 	AppendMode     bool     `json:"append_mode,omitempty"`
 	StatsPath      string   `json:"stats_path,omitempty"`
 	Key            string   `json:"key"`
@@ -72,6 +74,11 @@ func (Transport) CaddyModule() caddy.ModuleInfo {
 }
 
 func (t *Transport) Provision(ctx caddy.Context) error {
+	if t.Profile != "" {
+		if _, ok := profiles[t.Profile]; !ok {
+			return errors.New("unknown application profile")
+		}
+	}
 	if len(t.Key) < 32 || len(t.AllowedTargets) == 0 {
 		return errors.New("transport requires private key and target allowlist")
 	}
@@ -216,7 +223,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, asset := assetDefinition(path)
-	carrier := path == "/api/sync" || path == "/api/events" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk"
+	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk"
 	if !asset && !carrier {
 		return next.ServeHTTP(w, r)
 	}
@@ -240,7 +247,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 				return nil
 			}
 		}
-		body, mime, err := assetBody(path)
+		body, mime, err := assetBody(path, t.appProfile())
 		if err != nil {
 			return err
 		}
@@ -255,7 +262,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 	s.mu.Lock()
-	if path == "/api/sync" || path == "/api/upload/chunk" {
+	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" {
 		capacity := 4096
 		if path == "/api/upload/chunk" {
 			capacity = 131072
@@ -318,6 +325,13 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.stats.UploadUseful += useful
 		t.stats.Opens += opens
 		t.mu.Unlock()
+		if t.appProfile().Duplex {
+			down := 24576
+			if path == "/api/sync/media" {
+				down = t.appProfile().Down
+			}
+			return t.downstream(w, s, down)
+		}
 		w.WriteHeader(204)
 		return nil
 	}
@@ -327,9 +341,21 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 	capacity := 24576
-	if strings.HasPrefix(path, "/media/chunk/") {
-		capacity = 131072
+	if path == "/api/events/brief" {
+		capacity = 8192
 	}
+	if path == "/api/events/state" {
+		capacity = 32768
+	}
+	if strings.HasPrefix(path, "/media/chunk/") {
+		capacity = t.appProfile().Down
+	}
+	s.mu.Unlock()
+	return t.downstream(w, s, capacity)
+}
+
+func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) error {
+	s.mu.Lock()
 	frames := s.peer.Take(capacity - cell.Header)
 	used, useful := 0, uint64(0)
 	for _, f := range frames {
@@ -382,7 +408,7 @@ func assetDefinition(path string) (assetSpec, bool) {
 	}
 	return assetSpec{}, false
 }
-func assetBody(path string) ([]byte, string, error) {
+func assetBody(path string, profile ...appProfile) ([]byte, string, error) {
 	spec, ok := assetDefinition(path)
 	if !ok {
 		return nil, "", errors.New("unknown asset")
@@ -390,6 +416,17 @@ func assetBody(path string) ([]byte, string, error) {
 	body, err := site.ReadFile("site/" + spec.file)
 	if err != nil {
 		return nil, "", err
+	}
+	if path == "/assets/app.js" {
+		selected := profiles["v1"]
+		if len(profile) > 0 {
+			selected = profile[0]
+		}
+		value, err := json.Marshal(selected)
+		if err != nil {
+			return nil, "", err
+		}
+		body = bytes.ReplaceAll(body, []byte("__NFC_PROFILE__"), value)
 	}
 	if len(body) > spec.size {
 		return nil, "", errors.New("asset capacity exceeded")

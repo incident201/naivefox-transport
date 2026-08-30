@@ -2,8 +2,10 @@ package transport
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
@@ -81,5 +83,85 @@ func TestModuleRequiresAllowlist(t *testing.T) {
 			m.Cleanup()
 			t.Fatal("unsafe configuration")
 		}
+	}
+}
+
+func TestFixedProfiles(t *testing.T) {
+	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120}
+	if len(budgets) != len(profiles) {
+		t.Fatal("every profile requires a frozen budget")
+	}
+	for name, profile := range profiles {
+		t.Run(name, func(t *testing.T) {
+			module := &Transport{Profile: name, Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
+			if err := module.Provision(caddy.Context{}); err != nil {
+				t.Fatal(err)
+			}
+			defer module.Cleanup()
+			next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { t.Error("unexpected fallback"); return nil })
+			root := httptest.NewRecorder()
+			module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+			cookie := root.Result().Cookies()[0]
+			request := func(method, path string, body []byte) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+				r.AddCookie(cookie)
+				w := httptest.NewRecorder()
+				if err := module.ServeHTTP(w, r, next); err != nil {
+					t.Fatal(err)
+				}
+				return w
+			}
+			js := request("GET", "/assets/app.js", nil)
+			encoded, _ := json.Marshal(profile)
+			if js.Code != 200 || js.Body.Len() != 24576 || !bytes.Contains(js.Body.Bytes(), encoded) || bytes.Contains(js.Body.Bytes(), []byte("__NFC_PROFILE__")) {
+				t.Fatal("fixed script profile")
+			}
+			for round := 0; round < profile.Rounds; round++ {
+				media := round >= 2 && round < profile.Rounds-2
+				capacity := 24576
+				if media {
+					capacity = profile.Down
+				}
+				if profile.Slots != nil {
+					capacity = profile.Slots[round]
+				}
+				path := "/api/sync"
+				if profile.Duplex && media {
+					path += "/media"
+				}
+				body, _ := cell.Encode(uint32(round), 4096, nil)
+				w := request("POST", path, body)
+				if !profile.Duplex {
+					if w.Code != 204 || w.Body.Len() != 0 {
+						t.Fatal("sync acknowledgment")
+					}
+					path = "/media/chunk/" + strconv.Itoa(round)
+					switch capacity {
+					case 8192:
+						path = "/api/events/brief"
+					case 32768:
+						path = "/api/events/state"
+					case 24576:
+						path = "/api/events"
+					}
+					w = request("GET", path, nil)
+				}
+				seq, frames, filler, err := cell.Decode(w.Body.Bytes())
+				if w.Code != 200 || err != nil || seq != uint32(round) || len(frames) != 0 || filler != capacity-cell.Header || w.Body.Len() != capacity || w.Header().Get("X-App-Capacity") != strconv.Itoa(capacity) || w.Header().Get("Cache-Control") != "no-store" {
+					t.Fatalf("round %d capacity/sequence", round)
+				}
+			}
+			if module.stats.DownloadBytes != uint64(budgets[name]) || module.stats.UploadBytes != uint64(profile.Rounds*4096) || module.stats.Opens != 0 || module.stats.Rejected != 0 {
+				t.Fatal("empty visitor budget or authorization")
+			}
+		})
+	}
+}
+
+func TestUnknownProfileRejected(t *testing.T) {
+	module := &Transport{Profile: "typo", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
+	if err := module.Provision(caddy.Context{}); err == nil {
+		module.Cleanup()
+		t.Fatal("unknown profile accepted")
 	}
 }
