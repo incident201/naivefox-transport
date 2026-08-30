@@ -1,8 +1,8 @@
 # Application-capacity transport laboratory
 
 Experimental Caddy module and loopback bridge for the NaiveFox application-carrier
-campaign. Not a product, not wire-compatible with NaiveProxy, and not the current
-NaiveFox default. The paired Firefox experiment lives on the dedicated
+campaign. Not a product and not wire-compatible with NaiveProxy. The native
+NaiveFox defaults are unchanged. The paired Firefox experiment lives on the dedicated
 `experiment/application-carrier-20260830` source branch.
 
 An actual Firefox instance executes the bundled gallery SPA. All outer traffic
@@ -12,7 +12,18 @@ SOCKS5 CONNECT and HTTP CONNECT listeners. Firefox still owns TLS, HTTP, QUIC,
 pooling and packetization. This full-browser worker measures an upper bound; it
 is not a lean-runtime implementation.
 
-## Fixed application profile
+## Experimental default
+
+Omitting the server `profile` now selects `continuous-bulk-pipeline`: the
+20-round startup, continuous active/idle lifecycle and bounded two-transaction
+bulk pipeline. No interactive-only duplex, fast filler or enlarged idle-event
+variant is enabled. The bridge's omitted `continuous` and `receive_window`
+fields default to `true` and `524288`, matching that application. Explicit
+legacy values remain authoritative; alternative profiles still require matched
+private bridge/server configuration. This is a default only for the new
+experimental transport, not a native/full-source product promotion.
+
+## Historical finite application profiles
 
 The v1 job consists of 16 rounds: two interactive, twelve media-download,
 two interactive. Each round performs one 4096-byte POST and one finite GET,
@@ -28,8 +39,8 @@ carriers in v0. Their 73728 bytes remain startup overhead. Static assets are
 cacheable; cold profiles are mandatory for the initial comparison. Root/API
 responses are not cached, and carrier bodies must not be content-encoded.
 This specific application/module is required: arbitrary existing websites do not
-satisfy the protocol. Idle polls, upload lifecycle and adaptive states are not
-implemented or qualified yet. A diagnostic round-count override is not the
+satisfy the protocol. At that earlier stage idle polls and adaptive states were
+not implemented; the continuous default below supersedes that limit. A diagnostic round-count override is not the
 primary profile.
 
 The original 12-round profile admitted initial H2 transfers, but one repeated
@@ -42,7 +53,8 @@ ablation is selected by private server/bridge configuration, not by a different
 wire URL: every outer navigation requests exactly `/`.
 
 The private `profile` configuration selects preregistered cost experiments;
-omission remains `v1`. `duplex-v1` returns the fixed downstream cell in each
+omission selects `continuous-bulk-pipeline`; select `v1` explicitly to reproduce
+the original finite job. `duplex-v1` returns the fixed downstream cell in each
 POST response. `compact*` reduces media cells to 64 KiB with explicit 16/20
 round and animation-cadence variants. `staged*` moves capacity out of startup
 and tail slots: four 8-KiB, two 32-KiB, ten (18 rounds) or twelve (20 rounds)
@@ -247,7 +259,8 @@ Unauthenticated visitors may synchronize empty cells but cannot dial targets.
 The bridge binds only loopback and requires a private URL capability and exact
 Origin for WSS. Keep all private configuration, logs and captures outside Git.
 
-Each session has at most 32 active streams with 256 KiB receive credit each,
+Each session has at most 32 active streams, with 512 KiB receive credit each
+in the default pipeline (256 KiB in explicit legacy profiles),
 16 queued outbound reads of at most 16 KiB each and 128 inbound frame slots.
 In-flight plus prefetched bytes mean the total memory bound is larger than the
 credit alone. A slow target/client stops credit grants. Byte sequence space is

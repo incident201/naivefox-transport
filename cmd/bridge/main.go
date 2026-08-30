@@ -46,15 +46,20 @@ func main() {
 	}
 }
 
+func decodeConfig(reader io.Reader) (config, error) {
+	cfg := config{Continuous: true, ReceiveWindow: 524288}
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	err := decoder.Decode(&cfg)
+	return cfg, err
+}
+
 func run(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	var cfg config
-	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&cfg)
+	cfg, err := decodeConfig(file)
 	file.Close()
 	if err != nil {
 		return err

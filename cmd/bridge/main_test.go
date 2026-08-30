@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,20 @@ import (
 	"naivefox.local/transport/internal/cell"
 	"naivefox.local/transport/internal/mux"
 )
+
+func TestBridgeDefaultsMatchContinuousPipeline(t *testing.T) {
+	cfg, err := decodeConfig(strings.NewReader(`{}`))
+	if err != nil || !cfg.Continuous || cfg.ReceiveWindow != 524288 || cfg.Append || cfg.FillerOnly {
+		t.Fatal("bridge default mismatch")
+	}
+	cfg, err = decodeConfig(strings.NewReader(`{"continuous":false,"receive_window":0}`))
+	if err != nil || cfg.Continuous || cfg.ReceiveWindow != 0 {
+		t.Fatal("explicit legacy settings lost")
+	}
+	if _, err = decodeConfig(strings.NewReader(`{"unknown":true}`)); err == nil {
+		t.Fatal("unknown bridge configuration accepted")
+	}
+}
 
 func TestBothFrontendsByteExactThroughCells(t *testing.T) {
 	target, err := net.Listen("tcp", "127.0.0.1:0")

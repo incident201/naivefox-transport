@@ -17,7 +17,7 @@ import (
 )
 
 func TestApplicationCapacityAuthAndReplay(t *testing.T) {
-	module := &Transport{Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
+	module := &Transport{Profile: "v1", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
 	if err := module.Provision(caddy.Context{}); err != nil {
 		t.Fatal(err)
 	}

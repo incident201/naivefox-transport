@@ -1,5 +1,7 @@
 package transport
 
+const defaultProfile = "continuous-bulk-pipeline"
+
 type appProfile struct {
 	Slots             []int  `json:"slots,omitempty"`
 	Rounds            int    `json:"rounds"`
@@ -72,7 +74,7 @@ var profiles = func() map[string]appProfile {
 func (t *Transport) appProfile() appProfile {
 	name := t.Profile
 	if name == "" {
-		name = "v1"
+		name = defaultProfile
 	}
 	return profiles[name]
 }

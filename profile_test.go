@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+func TestDefaultIsMeasuredContinuousPipeline(t *testing.T) {
+	implicit, _ := json.Marshal((&Transport{}).appProfile())
+	explicit, _ := json.Marshal(profiles["continuous-bulk-pipeline"])
+	if defaultProfile != "continuous-bulk-pipeline" || string(implicit) != string(explicit) {
+		t.Fatal("experimental default mismatch")
+	}
+	p := (&Transport{}).appProfile()
+	if !p.Continuous || !p.PairBulk || !p.PipelineBulk || p.ReceiveWindow != 524288 || p.IdleEvents || p.InteractiveDuplex || p.FillerOnly {
+		t.Fatal("default includes an unselected variant")
+	}
+}
+
 // Freeze the previously measured parameters while replacing positional profile
 // literals with named inheritance. New profiles are deliberately outside this set.
 func TestPreviouslyMeasuredProfilesFrozen(t *testing.T) {
