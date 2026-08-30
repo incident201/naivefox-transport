@@ -44,6 +44,11 @@ type Transport struct {
 }
 
 type counters struct {
+	CellCapacities map[string]uint64 `json:"cell_capacities,omitempty"`
+	IdleStarted    uint64            `json:"idle_started"`
+	IdleCompleted  uint64            `json:"idle_completed"`
+	IdleCancelled  uint64            `json:"idle_cancelled"`
+	WriteErrors    uint64            `json:"write_errors"`
 	Peers          []mux.Stats       `json:"peers,omitempty"`
 	Requests       map[string]uint64 `json:"requests"`
 	Protocols      map[string]uint64 `json:"protocols"`
@@ -67,6 +72,8 @@ type session struct {
 	up         uint32
 	down       uint32
 	peer       *mux.Peer
+	idle       bool
+	wake       chan struct{}
 }
 
 func (Transport) CaddyModule() caddy.ModuleInfo {
@@ -88,7 +95,7 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 		}
 	}
 	t.sessions = make(map[string]*session)
-	t.stats = counters{Requests: make(map[string]uint64), Protocols: make(map[string]uint64)}
+	t.stats = counters{Requests: make(map[string]uint64), Protocols: make(map[string]uint64), CellCapacities: make(map[string]uint64)}
 	t.stop = make(chan struct{})
 	t.done = make(chan struct{})
 	go func() {
@@ -165,7 +172,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	if _, err := rand.Read(token); err != nil {
 		return nil, err
 	}
-	s := &session{ip: ip, last: time.Now(), appendMode: t.AppendMode}
+	s := &session{ip: ip, last: time.Now(), appendMode: t.AppendMode, wake: make(chan struct{}, 1)}
 	s.peer = mux.New(func(ctx context.Context, target string) (net.Conn, error) {
 		allowed := false
 		for _, value := range t.AllowedTargets {
@@ -223,7 +230,8 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, asset := assetDefinition(path)
-	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk"
+	continuousPath := path == "/api/events/idle" || path == "/api/data/interactive" || path == "/api/data/download" || path == "/api/data/upload" || path == "/api/data/mixed"
+	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk" || (t.appProfile().Continuous && continuousPath)
 	if !asset && !carrier {
 		return next.ServeHTTP(w, r)
 	}
@@ -260,6 +268,32 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	if err != nil {
 		t.reject(w)
 		return nil
+	}
+	if path == "/api/events/idle" {
+		if r.Method != "GET" {
+			t.reject(w)
+			return nil
+		}
+		t.mu.Lock()
+		t.stats.IdleStarted++
+		t.mu.Unlock()
+		if err := waitIdle(r.Context(), s, 30*time.Second); err != nil {
+			if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
+				t.mu.Lock()
+				t.stats.IdleCancelled++
+				t.mu.Unlock()
+			} else {
+				t.reject(w)
+			}
+			return nil
+		}
+		err := t.downstream(w, s, 512)
+		if err == nil {
+			t.mu.Lock()
+			t.stats.IdleCompleted++
+			t.mu.Unlock()
+		}
+		return err
 	}
 	s.mu.Lock()
 	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" {
@@ -318,6 +352,10 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			return nil
 		}
 		s.up++
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
 		s.mu.Unlock()
 		t.mu.Lock()
 		t.stats.UploadBytes += uint64(len(body))
@@ -353,8 +391,47 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	if strings.HasPrefix(path, "/media/chunk/") {
 		capacity = t.appProfile().Down
 	}
+	if path == "/api/data/interactive" || path == "/api/data/upload" {
+		capacity = 8192
+	}
+	if path == "/api/data/download" || path == "/api/data/mixed" {
+		capacity = 65536
+	}
 	s.mu.Unlock()
 	return t.downstream(w, s, capacity)
+}
+
+func waitIdle(ctx context.Context, s *session, timeout time.Duration) error {
+	s.mu.Lock()
+	if s.idle {
+		s.mu.Unlock()
+		return errors.New("idle poll already active")
+	}
+	s.idle = true
+	up := s.up
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); s.idle = false; s.mu.Unlock() }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		pressure := s.peer.Pressure()
+		s.mu.Lock()
+		changed := s.up != up
+		s.mu.Unlock()
+		if changed || pressure.Bytes > 0 || pressure.Controls > 0 {
+			return ctx.Err()
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.peer.Done():
+			return context.Canceled
+		case <-timer.C:
+			return nil
+		case <-s.peer.Changes():
+		case <-s.wake:
+		}
+	}
 }
 
 func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) error {
@@ -381,11 +458,27 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	t.stats.DownloadBytes += uint64(len(body))
 	t.stats.DownloadFiller += uint64(len(body) - cell.Header - used)
 	t.stats.DownloadUseful += useful
+	t.stats.CellCapacities[strconv.Itoa(base)]++
 	t.mu.Unlock()
+	if t.appProfile().Continuous {
+		pressure := s.peer.Pressure()
+		state := "idle"
+		if pressure.Bytes >= 32768 {
+			state = "download"
+		} else if pressure.Bytes > 0 || pressure.Controls > 0 {
+			state = "interactive"
+		}
+		w.Header().Set("X-App-State", state)
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("X-App-Capacity", strconv.Itoa(base))
 	_, err = w.Write(body)
+	if err != nil {
+		t.mu.Lock()
+		t.stats.WriteErrors++
+		t.mu.Unlock()
+	}
 	return err
 }
 
@@ -435,6 +528,11 @@ func assetBody(path string, profile ...appProfile) ([]byte, string, error) {
 			return nil, "", err
 		}
 		body = bytes.ReplaceAll(body, []byte("__NFC_READER__"), reader)
+		lifecycle, err := site.ReadFile("site/lifecycle.js")
+		if err != nil {
+			return nil, "", err
+		}
+		body = bytes.ReplaceAll(body, []byte("__NFC_LIFECYCLE__"), lifecycle)
 	}
 	if len(body) > spec.size {
 		return nil, "", errors.New("asset capacity exceeded")

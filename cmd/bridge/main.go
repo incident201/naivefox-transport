@@ -32,6 +32,7 @@ type config struct {
 	Ready       string `json:"ready"`
 	Stats       string `json:"stats"`
 	Append      bool   `json:"append"`
+	Continuous  bool   `json:"continuous"`
 }
 
 func main() {
@@ -99,6 +100,31 @@ func run(path string) error {
 		}
 		defer conn.Close()
 		defer peer.Close()
+		var writeMu sync.Mutex
+		write := func(body []byte) error {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			return conn.WriteMessage(websocket.BinaryMessage, body)
+		}
+		notificationsDone := make(chan struct{})
+		defer close(notificationsDone)
+		if cfg.Continuous {
+			go func() {
+				for {
+					select {
+					case <-notificationsDone:
+						return
+					case <-peer.Done():
+						return
+					case <-peer.Changes():
+						if err := write([]byte{4}); err != nil {
+							conn.Close()
+							return
+						}
+					}
+				}
+			}()
+		}
 		conn.SetReadLimit(cell.MaxCell + 5)
 		var uploadSequence, downloadSequence uint32
 		authSent := false
@@ -149,10 +175,18 @@ func run(path string) error {
 					return
 				}
 				reply = []byte{3}
+			case 5:
+				if !cfg.Continuous || len(body) != 1 {
+					return
+				}
+				reply, err = json.Marshal(peer.Pressure())
+				if err != nil {
+					return
+				}
 			default:
 				return
 			}
-			if err := conn.WriteMessage(websocket.BinaryMessage, reply); err != nil {
+			if err := write(reply); err != nil {
 				return
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"naivefox.local/transport/internal/cell"
 )
@@ -41,6 +42,7 @@ type stream struct {
 	remoteFin        bool
 	remoteFinWritten bool
 	localFinSent     bool
+	queuedBytes      atomic.Int64
 }
 
 func (s *stream) close() {
@@ -64,11 +66,41 @@ type Peer struct {
 	highest uint32
 	closed  bool
 	stats   Stats
+	changes chan struct{}
 }
 
 func New(dial DialFunc) *Peer {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Peer{ctx: ctx, cancel: cancel, dial: dial, streams: make(map[uint32]*stream)}
+	return &Peer{ctx: ctx, cancel: cancel, dial: dial, streams: make(map[uint32]*stream), changes: make(chan struct{}, 1)}
+}
+
+func (p *Peer) notify() {
+	select {
+	case p.changes <- struct{}{}:
+	default:
+	}
+}
+
+func (p *Peer) Changes() <-chan struct{} { return p.changes }
+func (p *Peer) Done() <-chan struct{}    { return p.ctx.Done() }
+
+type Pressure struct {
+	Streams  int   `json:"streams"`
+	Bytes    int64 `json:"bytes"`
+	Controls int   `json:"controls"`
+}
+
+func (p *Peer) Pressure() Pressure {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := Pressure{Streams: len(p.streams)}
+	for _, s := range p.streams {
+		state.Bytes += min(s.queuedBytes.Load(), int64(s.credit))
+		if s.open != nil || s.ack || s.reset || s.grant > 0 || (s.queuedBytes.Load() == 0 && (s.pending != nil || len(s.output) > 0)) {
+			state.Controls++
+		}
+	}
+	return state
 }
 
 func (p *Peer) newStream(id uint32) *stream {
@@ -93,6 +125,7 @@ func (p *Peer) Open(conn net.Conn, authority string) (uint32, error) {
 	s := p.newStream(p.highest)
 	s.open = &cell.Frame{Kind: cell.Open, Stream: s.id, Body: []byte(authority)}
 	p.attach(s, conn)
+	p.notify()
 	return s.id, nil
 }
 
@@ -118,6 +151,7 @@ func (p *Peer) fail(s *stream) {
 	}
 	p.mu.Unlock()
 	s.close()
+	p.notify()
 }
 
 func (p *Peer) read(s *stream, conn net.Conn) {
@@ -132,10 +166,13 @@ func (p *Peer) read(s *stream, conn net.Conn) {
 				return
 			}
 			f := cell.Frame{Kind: cell.Data, Stream: s.id, Sequence: sequence, Body: body[:n]}
+			s.queuedBytes.Add(int64(n))
 			select {
 			case s.output <- f:
 				sequence += uint32(n)
+				p.notify()
 			case <-s.ctx.Done():
+				s.queuedBytes.Add(-int64(n))
 				return
 			}
 		}
@@ -143,6 +180,7 @@ func (p *Peer) read(s *stream, conn net.Conn) {
 			if errors.Is(err, io.EOF) {
 				select {
 				case s.output <- cell.Frame{Kind: cell.Fin, Stream: s.id, Sequence: sequence}:
+					p.notify()
 				case <-s.ctx.Done():
 				}
 			} else if s.ctx.Err() == nil {
@@ -186,6 +224,7 @@ func (p *Peer) write(s *stream, conn net.Conn) {
 			s.grant += uint32(len(f.Body))
 			p.stats.Delivered += uint64(len(f.Body))
 			p.mu.Unlock()
+			p.notify()
 		}
 	}
 }
@@ -222,6 +261,7 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 				s.ack = true
 				p.attach(s, conn)
 				p.mu.Unlock()
+				p.notify()
 			}()
 			continue
 		}
@@ -278,6 +318,9 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 		default:
 			return errors.New("unexpected frame")
 		}
+	}
+	if len(frames) > 0 {
+		p.notify()
 	}
 	return nil
 }
@@ -339,6 +382,7 @@ func (p *Peer) Take(budget int) []cell.Frame {
 						s.pending.Body = s.pending.Body[n:]
 						s.pending.Sequence += uint32(n)
 						s.credit -= uint32(n)
+						s.queuedBytes.Add(-int64(n))
 						p.stats.Sent += uint64(n)
 						if len(s.pending.Body) == 0 {
 							s.pending = nil

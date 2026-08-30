@@ -70,6 +70,41 @@ H3 screen: a late inner completion request still lacked a slot. It is a recorded
 negative experiment, not a liveness fix. An ongoing application lifecycle is
 required before treating reduced finite profiles as a practical transport.
 
+## Continuous application
+
+The opt-in `continuous-v1` profile keeps the `staged-fast20` startup job, then
+runs indefinitely. Startup completion is not transport shutdown. A local queue
+notification or a server event can grant another four-slot activity lease:
+
+| State | POST capacity | Response capacity |
+| --- | ---: | ---: |
+| Interactive | 4096 | 8192 |
+| Download | 4096 | 65536 |
+| Upload | 131072 | 8192 |
+| Mixed | 131072 | 65536 |
+
+Each lease keeps its capacities even if queue pressure changes mid-lease.
+States are selected at lease boundaries using ready queue pressure and a coarse
+server hint, so empty and loaded sessions do not have identical total request
+traces. No candidate trace is replayed into a normal visitor reference. The
+ordinary refresh button can also wake an idle visitor. Network turnover after
+startup does not wait for animation frames.
+
+Idle holds one ordinary `GET /api/events/idle` for at most 30 seconds and always
+returns a finite 512-byte cell. New server bytes end that wait immediately.
+A local event sends a normal 4096-byte POST while the idle GET is outstanding,
+waking it without response reordering or an outer WebSocket. Queue notifications
+are coalesced over the existing local WSS IPC; they do not require rapid outer
+polling. Only one idle GET is allowed per session. Request cancellation and
+peer shutdown release the wait. Empty timeout bodies alone cost 61,440 bytes/hour;
+HTTP/TLS/IP/QUIC costs are additional and are measured separately.
+
+The separate activity routes `/api/data/{interactive,download,upload,mixed}`
+and existing upload route share the authenticated multiplexer. Idle/active
+capacity counters, write errors and cancellation counts support exact accounting.
+The source-branch journal contains liveness, idle and performance results;
+this remains a full-browser prototype, not a lean-runtime or production default.
+
 ## Framing and limits
 
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,

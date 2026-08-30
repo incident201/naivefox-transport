@@ -2,15 +2,18 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"naivefox.local/transport/internal/cell"
+	"naivefox.local/transport/internal/mux"
 )
 
 func TestApplicationCapacityAuthAndReplay(t *testing.T) {
@@ -87,7 +90,7 @@ func TestModuleRequiresAllowlist(t *testing.T) {
 }
 
 func TestFixedProfiles(t *testing.T) {
-	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120, "staged-stream20": 901120, "staged-commit20": 905216}
+	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120, "staged-stream20": 901120, "staged-commit20": 905216, "continuous-v1": 901120}
 	if len(budgets) != len(profiles) {
 		t.Fatal("every profile requires a frozen budget")
 	}
@@ -173,5 +176,55 @@ func TestUnknownProfileRejected(t *testing.T) {
 	if err := module.Provision(caddy.Context{}); err == nil {
 		module.Cleanup()
 		t.Fatal("unknown profile accepted")
+	}
+}
+
+func TestIdleWakeCancellationAndSinglePoll(t *testing.T) {
+	peer := mux.New(nil)
+	defer peer.Close()
+	s := &session{peer: peer, wake: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- waitIdle(ctx, s, time.Second) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.mu.Lock()
+		active := s.idle
+		s.mu.Unlock()
+		if active {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("idle did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := waitIdle(ctx, s, time.Second); err == nil {
+		t.Fatal("overlapping idle poll")
+	}
+	s.mu.Lock()
+	s.up++
+	s.mu.Unlock()
+	s.wake <- struct{}{}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("upload did not wake idle poll")
+	}
+	go func() { done <- waitIdle(ctx, s, time.Second) }()
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := waitIdle(context.Background(), s, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	peer.Close()
+	if err := waitIdle(context.Background(), s, time.Second); err != context.Canceled {
+		t.Fatalf("closed peer: %v", err)
 	}
 }

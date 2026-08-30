@@ -1,10 +1,13 @@
 "use strict";
 __NFC_READER__
+__NFC_LIFECYCLE__
 (() => {
   const params = new URLSearchParams(location.hash.slice(1));
   const profile = __NFC_PROFILE__;
   const rounds = Math.max(12, Math.min(256, Number(params.get("rounds")) || profile.rounds));
   let socket, pending, sequence = 0, downloadSequence = 0, running = false;
+  const wake = new WakeLatch();
+  let manualWake = false, bridgeClosed = false;
   const chart = document.getElementById("chart").getContext("2d");
   const status = document.getElementById("status");
   function ipc(body) {
@@ -30,11 +33,49 @@ __NFC_READER__
       if(socket){const message=new Uint8Array(result.length+1);message[0]=2;message.set(result,1);await ipc(message);}
     });
     if(early){window.__NFC_EARLY_CELLS__++;window.__NFC_EARLY_FILLER__+=early;}
+    const state=response.headers.get("X-App-State")||"idle";
+    if(!["idle","interactive","download"].includes(state))throw new Error("remote state");
+    return state;
+  }
+  async function pressure() {
+    if(bridgeClosed)throw new Error("bridge closed");
+    const value=socket?JSON.parse(new TextDecoder().decode(await ipc(new Uint8Array([5])))):{bytes:0,controls:0,streams:0};
+    if(manualWake)value.bytes=Math.max(value.bytes,1);
+    return value;
+  }
+  async function idle(observed) {
+    const abort=new AbortController();
+    window.__NFC_IDLE_POLLS__++;
+    const response=fetch("/api/events/idle",{credentials:"same-origin",signal:abort.signal});
+    const remote=response.then(value=>({response:value}));
+    let waiting, complete=false;
+    try {
+      while(true) {
+        waiting=wake.after(observed);
+        const ready=await Promise.race([remote,waiting.promise.then(()=>({wake:true}))]);
+        waiting.cancel();
+        if(ready.response) {
+          const state=await receiveSlot(ready.response,512);complete=true;return state;
+        }
+        observed=wake.version;
+        const value=await pressure();
+        if(!value.bytes&&!value.controls)continue;
+        manualWake=false;
+        const sent=await sendSlot(4096,"/api/sync");
+        if(sent.status!==204)throw new Error("idle wake");
+        window.__NFC_IDLE_WAKE_POSTS__++;
+        const state=await receiveSlot(await response,512);complete=true;return state;
+      }
+    } finally {
+      if(waiting)waiting.cancel();
+      if(!complete){abort.abort();await remote.catch(()=>{});}
+    }
   }
   async function run() {
     if (running) return; running=true;window.__NFC_DONE__=false;window.__NFC_ERROR__=null;
     window.__NFC_EARLY_CELLS__=0;window.__NFC_EARLY_FILLER__=0;
     window.__NFC_ACTION_DONE__=false;
+    window.__NFC_PHASE__="startup";window.__NFC_ALIVE__=true;window.__NFC_DYNAMIC_ROUNDS__=0;window.__NFC_IDLE_POLLS__=0;window.__NFC_IDLE_WAKE_POSTS__=0;
     try {
       document.getElementById("progress").max=rounds;
       for(let round=0;round<rounds;round++) {
@@ -55,10 +96,25 @@ __NFC_READER__
       }
       if(profile.commit){await receiveSlot(await sendSlot(4096,"/api/action"),4096);window.__NFC_ACTION_DONE__=true;}
       status.textContent="Archive synchronized.";window.__NFC_DONE__=true;
+      if(profile.continuous)await runLifecycle({
+        alive:()=>!bridgeClosed,
+        pressure,
+        state:value=>{window.__NFC_PHASE__=value;status.textContent=value==="idle"?"Waiting for updates.":"Synchronizing updates.";},
+        idle,
+        exchange:async state=>{
+          const uploading=state==="upload"||state==="mixed";
+          manualWake=false;
+          const sent=await sendSlot(uploading?131072:4096,uploading?"/api/upload/chunk":"/api/sync");
+          if(sent.status!==204)throw new Error("active sync");
+          const capacity=state==="download"||state==="mixed"?65536:8192;
+          const hint=await receiveSlot(await fetch("/api/data/"+state,{credentials:"same-origin"}),capacity);
+          window.__NFC_DYNAMIC_ROUNDS__++;return hint;
+        },
+      },wake);
     } catch (_) { if(socket)socket.close();status.textContent="Synchronization unavailable.";window.__NFC_ERROR__="application-or-transport"; }
-    finally { running=false; }
+    finally { running=false;window.__NFC_ALIVE__=false; }
   }
-  document.getElementById("refresh").addEventListener("click",run);
+  document.getElementById("refresh").addEventListener("click",()=>{if(profile.continuous&&running){manualWake=true;wake.notify();}else run();});
   (async()=>{
     try {
       if(params.has("bridge")) {
@@ -66,8 +122,8 @@ __NFC_READER__
         if(bridge.protocol!=="wss:" || !["localhost","127.0.0.1","[::1]"].includes(bridge.hostname))throw new Error("local bridge");
         socket=new WebSocket(bridge);socket.binaryType="arraybuffer";
         await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
-        socket.onmessage=event=>{const next=pending;pending=null;if(next)next.resolve(event.data);};
-        socket.onclose=()=>{if(pending){pending.reject(new Error("ipc closed"));pending=null;}};
+        socket.onmessage=event=>{const body=new Uint8Array(event.data);if(body.length===1&&body[0]===4){wake.notify();return;}const next=pending;pending=null;if(next)next.resolve(event.data);};
+        socket.onclose=()=>{bridgeClosed=true;wake.notify();if(pending){pending.reject(new Error("ipc closed"));pending=null;}};
       }
       window.__NFC_READY__=true;
       if(params.get("hold")!=="1") await run();

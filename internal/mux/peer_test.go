@@ -12,6 +12,48 @@ import (
 	"naivefox.local/transport/internal/cell"
 )
 
+func TestPressureNotificationsAndPartialTake(t *testing.T) {
+	peer := New(nil)
+	defer peer.Close()
+	app, transport := net.Pipe()
+	defer app.Close()
+	if _, err := peer.Open(transport, "localhost:443"); err != nil {
+		t.Fatal(err)
+	}
+	if peer.Pressure().Controls != 1 || peer.Pressure().Streams != 1 {
+		t.Fatal("open pressure")
+	}
+	peer.Take(4080)
+	select {
+	case <-peer.Changes():
+	default:
+		t.Fatal("missing open notification")
+	}
+	go app.Write(bytes.Repeat([]byte{7}, 8192))
+	deadline := time.After(time.Second)
+	for peer.Pressure().Bytes != 8192 {
+		select {
+		case <-peer.Changes():
+		case <-deadline:
+			t.Fatal("missing data pressure")
+		}
+	}
+	frames := peer.Take(cell.FrameHeader + 1000)
+	if len(frames) != 1 || frames[0].Kind != cell.Data || len(frames[0].Body) != 1000 || peer.Pressure().Bytes != 7192 {
+		t.Fatal("partial pressure accounting")
+	}
+	peer.Take(10000)
+	if peer.Pressure().Bytes != 0 {
+		t.Fatal("drained pressure")
+	}
+	for range 1000 {
+		peer.notify()
+	}
+	if len(peer.changes) != 1 {
+		t.Fatal("notifications not coalesced")
+	}
+}
+
 func TestMultiplexCreditAndHalfClose(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
