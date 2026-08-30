@@ -13,5 +13,10 @@ export GOMODCACHE="${GOMODCACHE:-$transport_root/artifacts/_work/go-module-cache
 export TMPDIR="${NAIVEFOX_TMPDIR:-$transport_root/artifacts/_work/tmp}"
 export GOTMPDIR="$TMPDIR"
 mkdir -p "$GOCACHE" "$GOMODCACHE" "$TMPDIR"
+# Also exclude legacy artifact caches created before the _work layout.
+mkdir -p "$transport_root/artifacts"
+if [[ ! -f "$transport_root/artifacts/go.mod" ]]; then
+  printf 'module naivefox-build-artifacts\n\ngo 1.25.0\n' > "$transport_root/artifacts/go.mod"
+fi
 cd "$transport_root"
 exec "$@"

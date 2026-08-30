@@ -41,6 +41,8 @@ and default Go caches stay under ignored `artifacts/`. Caches and temporary
 Go sources live in `artifacts/_work/`, which Go's `./...` package discovery
 skips even after a CI cache restore. Keep custom caches outside the source tree
 or in an underscore-prefixed subtree for the same reason.
+The wrapper also creates an ignored module boundary at `artifacts/go.mod` so
+older cache directories remain outside source discovery after an upgrade.
 
 To reuse existing warm development caches, set `GOCACHE` and `GOMODCACHE`.
 `NAIVEFOX_TOOLROOT` additionally supports the retained fixture layout
