@@ -87,6 +87,7 @@ func (p *Peer) Done() <-chan struct{}    { return p.ctx.Done() }
 type Pressure struct {
 	Streams  int   `json:"streams"`
 	Bytes    int64 `json:"bytes"`
+	Queued   int64 `json:"queued"`
 	Controls int   `json:"controls"`
 }
 
@@ -95,7 +96,9 @@ func (p *Peer) Pressure() Pressure {
 	defer p.mu.Unlock()
 	state := Pressure{Streams: len(p.streams)}
 	for _, s := range p.streams {
-		state.Bytes += min(s.queuedBytes.Load(), int64(s.credit))
+		queued := s.queuedBytes.Load()
+		state.Bytes += min(queued, int64(s.credit))
+		state.Queued += queued
 		if s.open != nil || s.ack || s.reset || s.grant > 0 || (s.queuedBytes.Load() == 0 && (s.pending != nil || len(s.output) > 0)) {
 			state.Controls++
 		}

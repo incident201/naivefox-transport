@@ -54,6 +54,31 @@ func TestPressureNotificationsAndPartialTake(t *testing.T) {
 	}
 }
 
+func TestQueuedDataDoesNotBypassCredit(t *testing.T) {
+	peer := New(nil)
+	defer peer.Close()
+	s := peer.newStream(1)
+	s.credit = 0
+	s.pending = &cell.Frame{Kind: cell.Data, Stream: 1, Body: bytes.Repeat([]byte{7}, 65536)}
+	s.queuedBytes.Store(65536)
+	if pressure := peer.Pressure(); pressure.Bytes != 0 || pressure.Queued != 65536 || pressure.Controls != 0 {
+		t.Fatalf("blocked pressure %+v", pressure)
+	}
+	if frames := peer.Take(262128); len(frames) != 0 {
+		t.Fatal("backlog bypassed credit")
+	}
+	if err := peer.Receive([]cell.Frame{{Kind: cell.Credit, Stream: 1, Body: cell.Uint32(32768)}}); err != nil {
+		t.Fatal(err)
+	}
+	if pressure := peer.Pressure(); pressure.Bytes != 32768 || pressure.Queued != 65536 {
+		t.Fatalf("credit pressure %+v", pressure)
+	}
+	frames := peer.Take(262128)
+	if len(frames) != 1 || len(frames[0].Body) != 32768 || peer.Pressure().Queued != 32768 || peer.Pressure().Bytes != 0 {
+		t.Fatal("credit consumption")
+	}
+}
+
 func TestMultiplexCreditAndHalfClose(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

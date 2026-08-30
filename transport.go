@@ -44,23 +44,25 @@ type Transport struct {
 }
 
 type counters struct {
-	CellCapacities map[string]uint64 `json:"cell_capacities,omitempty"`
-	IdleStarted    uint64            `json:"idle_started"`
-	IdleCompleted  uint64            `json:"idle_completed"`
-	IdleCancelled  uint64            `json:"idle_cancelled"`
-	WriteErrors    uint64            `json:"write_errors"`
-	Peers          []mux.Stats       `json:"peers,omitempty"`
-	Requests       map[string]uint64 `json:"requests"`
-	Protocols      map[string]uint64 `json:"protocols"`
-	UploadBytes    uint64            `json:"upload_bytes"`
-	DownloadBytes  uint64            `json:"download_bytes"`
-	UploadFiller   uint64            `json:"upload_filler"`
-	DownloadFiller uint64            `json:"download_filler"`
-	UploadUseful   uint64            `json:"upload_useful"`
-	DownloadUseful uint64            `json:"download_useful"`
-	Opens          uint64            `json:"opens"`
-	Rejected       uint64            `json:"rejected"`
-	Connect        uint64            `json:"connect"`
+	CreditHintOpportunities uint64            `json:"credit_hint_opportunities"`
+	CreditHintPromotions    uint64            `json:"credit_hint_promotions"`
+	CellCapacities          map[string]uint64 `json:"cell_capacities,omitempty"`
+	IdleStarted             uint64            `json:"idle_started"`
+	IdleCompleted           uint64            `json:"idle_completed"`
+	IdleCancelled           uint64            `json:"idle_cancelled"`
+	WriteErrors             uint64            `json:"write_errors"`
+	Peers                   []mux.Stats       `json:"peers,omitempty"`
+	Requests                map[string]uint64 `json:"requests"`
+	Protocols               map[string]uint64 `json:"protocols"`
+	UploadBytes             uint64            `json:"upload_bytes"`
+	DownloadBytes           uint64            `json:"download_bytes"`
+	UploadFiller            uint64            `json:"upload_filler"`
+	DownloadFiller          uint64            `json:"download_filler"`
+	UploadUseful            uint64            `json:"upload_useful"`
+	DownloadUseful          uint64            `json:"download_useful"`
+	Opens                   uint64            `json:"opens"`
+	Rejected                uint64            `json:"rejected"`
+	Connect                 uint64            `json:"connect"`
 }
 
 type session struct {
@@ -448,6 +450,19 @@ func waitIdle(ctx context.Context, s *session, timeout time.Duration) error {
 	}
 }
 
+// A completed, substantially useful bulk cell may bridge one credit return.
+// Backlog alone must never keep a stalled receiver in an empty bulk loop.
+func downstreamState(pressure mux.Pressure, capacity int, useful uint64, preserve bool) (string, bool) {
+	opportunity := capacity == 262144 && useful >= 131072 && pressure.Bytes < 32768 && pressure.Queued >= 32768
+	if pressure.Bytes >= 32768 || (preserve && opportunity) {
+		return "download", opportunity
+	}
+	if pressure.Bytes > 0 || pressure.Controls > 0 {
+		return "interactive", opportunity
+	}
+	return "idle", opportunity
+}
+
 func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) error {
 	s.mu.Lock()
 	frames := s.peer.Take(capacity - cell.Header)
@@ -476,11 +491,15 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	t.mu.Unlock()
 	if t.appProfile().Continuous {
 		pressure := s.peer.Pressure()
-		state := "idle"
-		if pressure.Bytes >= 32768 {
-			state = "download"
-		} else if pressure.Bytes > 0 || pressure.Controls > 0 {
-			state = "interactive"
+		preserve := t.Profile == "continuous-bulk-ready"
+		state, opportunity := downstreamState(pressure, base, useful, preserve)
+		if opportunity {
+			t.mu.Lock()
+			t.stats.CreditHintOpportunities++
+			if preserve {
+				t.stats.CreditHintPromotions++
+			}
+			t.mu.Unlock()
 		}
 		w.Header().Set("X-App-State", state)
 	}

@@ -128,6 +128,14 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-ready` isolates a server-state hint experiment on top of bulk.
+After sending at least 128 KiB useful data in a 256-KiB cell, queued backlog
+of at least 32 KiB may preserve one download hint even if currently sendable
+credit falls below 32 KiB. The next POST can return credit. An empty or lightly
+used response cannot repeat this promotion; backlog never bypasses credit or
+keeps idle polling awake by itself. Both profiles record opportunity counters;
+only this profile records promotions. No increased buffers, sleeps or window.
+
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,
 frame count and reserved zeros. Frames have a 16-byte header: type, reserved
 zeros, stream ID, byte sequence, payload length. Types are OPEN, DATA, FIN,

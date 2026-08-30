@@ -9,7 +9,30 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"naivefox.local/transport/internal/cell"
+	"naivefox.local/transport/internal/mux"
 )
+
+func TestCreditHintIsBoundedByUsefulProgress(t *testing.T) {
+	blocked := mux.Pressure{Streams: 1, Queued: 65536}
+	for _, preserve := range []bool{false, true} {
+		state, opportunity := downstreamState(blocked, 262144, 200000, preserve)
+		if !opportunity || (preserve && state != "download") || (!preserve && state != "idle") {
+			t.Fatal("credit handoff decision")
+		}
+		for _, useful := range []uint64{0, 131071} {
+			state, opportunity := downstreamState(blocked, 262144, useful, preserve)
+			if opportunity || state != "idle" {
+				t.Fatal("stalled receiver retained bulk state")
+			}
+		}
+		if state, opportunity := downstreamState(blocked, 65536, 200000, preserve); opportunity || state != "idle" {
+			t.Fatal("non-bulk state changed")
+		}
+		if state, opportunity := downstreamState(mux.Pressure{Bytes: 32768, Queued: 32768}, 262144, 200000, preserve); opportunity || state != "download" {
+			t.Fatal("ready data changed")
+		}
+	}
+}
 
 func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
 	module := &Transport{Profile: "continuous-bulk", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
