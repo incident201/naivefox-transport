@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"naivefox.local/transport/internal/cell"
+	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
 func TestPressureNotificationsAndPartialTake(t *testing.T) {

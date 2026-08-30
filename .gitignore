@@ -1,4 +1,5 @@
 /bin/
 /private/
+/artifacts/
 *.pcap*
 *.keys

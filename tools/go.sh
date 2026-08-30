@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-toolroot=/home/zubastik/naivefox-refresh-20260830.fJHfmY/full-linux/naivefox-fixture/tools
-export PATH="$toolroot/go1.25.12/bin:$PATH"
-export GOCACHE="$toolroot/go-build-cache"
-export GOMODCACHE="$toolroot/go-module-cache"
-cd /home/zubastik/naivefox-transport
+transport_root=$(cd "$(dirname "$0")/.." && pwd)
+# Existing development fixtures can reuse their warm toolchain and caches.
+# A normal checkout only needs Go on PATH; no machine-local path is required.
+if [[ -n ${NAIVEFOX_TOOLROOT:-} ]]; then
+  export PATH="$NAIVEFOX_TOOLROOT/go1.25.12/bin:$NAIVEFOX_TOOLROOT/bin:$PATH"
+  export GOCACHE="${GOCACHE:-$NAIVEFOX_TOOLROOT/go-build-cache}"
+  export GOMODCACHE="${GOMODCACHE:-$NAIVEFOX_TOOLROOT/go-module-cache}"
+fi
+export GOCACHE="${GOCACHE:-$transport_root/artifacts/go-build-cache}"
+export GOMODCACHE="${GOMODCACHE:-$transport_root/artifacts/go-module-cache}"
+export TMPDIR="${NAIVEFOX_TMPDIR:-$transport_root/artifacts/tmp}"
+export GOTMPDIR="$TMPDIR"
+mkdir -p "$GOCACHE" "$GOMODCACHE" "$TMPDIR"
+cd "$transport_root"
 exec "$@"

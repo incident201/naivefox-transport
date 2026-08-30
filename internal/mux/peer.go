@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"naivefox.local/transport/internal/cell"
+	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
 type DialFunc func(context.Context, string) (net.Conn, error)

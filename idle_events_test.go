@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"naivefox.local/transport/internal/cell"
-	"naivefox.local/transport/internal/mux"
+	"github.com/incident201/naivefox-transport/internal/cell"
+	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
 func TestIdleHeartbeatAndEventKeepCellSequence(t *testing.T) {

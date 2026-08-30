@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"naivefox.local/transport/internal/cell"
-	"naivefox.local/transport/internal/mux"
+	"github.com/incident201/naivefox-transport/internal/cell"
+	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
 func TestBridgeDefaultsMatchContinuousPipeline(t *testing.T) {

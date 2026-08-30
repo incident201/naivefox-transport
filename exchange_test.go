@@ -9,7 +9,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"naivefox.local/transport/internal/cell"
+	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
 func TestActiveExchangeCapacityAndOrdering(t *testing.T) {

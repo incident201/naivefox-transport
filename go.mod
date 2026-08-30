@@ -1,4 +1,4 @@
-module naivefox.local/transport
+module github.com/incident201/naivefox-transport
 
 go 1.25.0
 
