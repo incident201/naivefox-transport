@@ -54,6 +54,15 @@ Failed profiles remain named to reproduce failures, not as recommended modes.
 These finite jobs can exhaust capacity before a workload finishes. Reducing
 filler for one workload does not qualify arbitrary size, rate or session length.
 
+`staged-stream20` preserves `staged-fast20`'s complete HTTP graph and capacities,
+but forwards a validated used prefix before draining filler. The following slot
+still waits for a complete successful body. A truncated tail or malformed frame
+aborts the local session; early delivery is never treated as full HTTP success.
+The script validates Content-Length, capacity, content encoding, sequence and
+frame bounds in both buffered and streaming modes. This reduces a local delivery
+barrier, not the outer byte budget. It is opt-in and is not a proven large speed
+improvement. Idle/active state transitions remain a separate unsolved problem.
+
 ## Framing and limits
 
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,
@@ -91,3 +100,8 @@ streams through both local frontends, byte-exact transfers larger than flow
 windows, half-close and cancellation. Network captures and residual scores are
 recorded in NaiveFox's `APPLICATION-CARRIER.md`; unit tests do not establish
 camouflage quality or a default promotion.
+
+Run `node --test test/read-cell.test.js` for all response split points, strict
+framing, prefix-before-EOF, sink backpressure, tail truncation, append handling
+and cancellation. The WSL fixture's managed Node is
+`/root/.mozbuild/node/bin/node` when Node is not on PATH.

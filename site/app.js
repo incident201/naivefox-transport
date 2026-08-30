@@ -1,9 +1,10 @@
 "use strict";
+__NFC_READER__
 (() => {
   const params = new URLSearchParams(location.hash.slice(1));
   const profile = __NFC_PROFILE__;
   const rounds = Math.max(12, Math.min(256, Number(params.get("rounds")) || profile.rounds));
-  let socket, pending, sequence = 0, running = false;
+  let socket, pending, sequence = 0, downloadSequence = 0, running = false;
   const chart = document.getElementById("chart").getContext("2d");
   const status = document.getElementById("status");
   function ipc(body) {
@@ -19,6 +20,7 @@
   }
   async function run() {
     if (running) return; running=true;window.__NFC_DONE__=false;window.__NFC_ERROR__=null;
+    window.__NFC_EARLY_CELLS__=0;window.__NFC_EARLY_FILLER__=0;
     try {
       document.getElementById("progress").max=rounds;
       for(let round=0;round<rounds;round++) {
@@ -35,18 +37,17 @@
         const path=slot===8192?"/api/events/brief":slot===32768?"/api/events/state":slot===24576?"/api/events":"/media/chunk/"+round;
         const response=profile.duplex?sent:await fetch(path,{credentials:"same-origin"});
         if(!response.ok)throw new Error("events");
-        const result=new Uint8Array(await response.arrayBuffer());
-        const declared=Number(response.headers.get("X-App-Capacity"));
-        const used=new DataView(result.buffer).getUint32(8);
-        if(result.length!==declared && result.length!==declared+used-16)throw new Error("capacity");
-        if(socket){const message=new Uint8Array(result.length+1);message[0]=2;message.set(result,1);await ipc(message);}
+        const early=await readCarrier(response,slot,downloadSequence++,profile.streaming,async result=>{
+          if(socket){const message=new Uint8Array(result.length+1);message[0]=2;message.set(result,1);await ipc(message);}
+        });
+        if(early){window.__NFC_EARLY_CELLS__++;window.__NFC_EARLY_FILLER__+=early;}
         chart.fillStyle=round%2?"#c0d69b":"#779989";chart.fillRect(round*640/rounds,120-(round+1)*100/rounds,640/rounds-2,(round+1)*100/rounds);
         document.getElementById("progress").value=round+1;status.textContent=`Archive segment ${round+1} of ${rounds}`;
         window.__NFC_ROUND__=round+1;
         if((round+1)%profile.paint_every===0||round===rounds-1)await new Promise(resolve=>requestAnimationFrame(resolve));
       }
       status.textContent="Archive synchronized.";window.__NFC_DONE__=true;
-    } catch (_) { status.textContent="Synchronization unavailable.";window.__NFC_ERROR__="application-or-transport"; }
+    } catch (_) { if(socket)socket.close();status.textContent="Synchronization unavailable.";window.__NFC_ERROR__="application-or-transport"; }
     finally { running=false; }
   }
   document.getElementById("refresh").addEventListener("click",run);

@@ -427,6 +427,11 @@ func assetBody(path string, profile ...appProfile) ([]byte, string, error) {
 			return nil, "", err
 		}
 		body = bytes.ReplaceAll(body, []byte("__NFC_PROFILE__"), value)
+		reader, err := site.ReadFile("site/read-cell.js")
+		if err != nil {
+			return nil, "", err
+		}
+		body = bytes.ReplaceAll(body, []byte("__NFC_READER__"), reader)
 	}
 	if len(body) > spec.size {
 		return nil, "", errors.New("asset capacity exceeded")
