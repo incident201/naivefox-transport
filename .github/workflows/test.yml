@@ -12,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GOCACHE: ${{ github.workspace }}/artifacts/go-build-cache
-      GOMODCACHE: ${{ github.workspace }}/artifacts/go-module-cache
+      GOCACHE: ${{ github.workspace }}/artifacts/_work/go-build-cache
+      GOMODCACHE: ${{ github.workspace }}/artifacts/_work/go-module-cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

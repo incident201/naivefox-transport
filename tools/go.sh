@@ -8,9 +8,9 @@ if [[ -n ${NAIVEFOX_TOOLROOT:-} ]]; then
   export GOCACHE="${GOCACHE:-$NAIVEFOX_TOOLROOT/go-build-cache}"
   export GOMODCACHE="${GOMODCACHE:-$NAIVEFOX_TOOLROOT/go-module-cache}"
 fi
-export GOCACHE="${GOCACHE:-$transport_root/artifacts/go-build-cache}"
-export GOMODCACHE="${GOMODCACHE:-$transport_root/artifacts/go-module-cache}"
-export TMPDIR="${NAIVEFOX_TMPDIR:-$transport_root/artifacts/tmp}"
+export GOCACHE="${GOCACHE:-$transport_root/artifacts/_work/go-build-cache}"
+export GOMODCACHE="${GOMODCACHE:-$transport_root/artifacts/_work/go-module-cache}"
+export TMPDIR="${NAIVEFOX_TMPDIR:-$transport_root/artifacts/_work/tmp}"
 export GOTMPDIR="$TMPDIR"
 mkdir -p "$GOCACHE" "$GOMODCACHE" "$TMPDIR"
 cd "$transport_root"

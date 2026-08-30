@@ -37,7 +37,10 @@ NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -ru
 containing both `http.handlers.forward_proxy` and
 `http.handlers.naivefox_transport`. It does not build Firefox. Its optional
 argument is an absolute output directory. Build output, temporary xcaddy work,
-and default Go caches stay under ignored `artifacts/`.
+and default Go caches stay under ignored `artifacts/`. Caches and temporary
+Go sources live in `artifacts/_work/`, which Go's `./...` package discovery
+skips even after a CI cache restore. Keep custom caches outside the source tree
+or in an underscore-prefixed subtree for the same reason.
 
 To reuse existing warm development caches, set `GOCACHE` and `GOMODCACHE`.
 `NAIVEFOX_TOOLROOT` additionally supports the retained fixture layout
