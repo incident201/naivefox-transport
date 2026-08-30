@@ -250,9 +250,21 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	if !asset && !carrier && !exchange && !bulk {
 		return next.ServeHTTP(w, r)
 	}
+	methodLabel, pathLabel, protocolLabel := r.Method, path, r.Proto
+	if methodLabel != "GET" && methodLabel != "POST" {
+		methodLabel = "OTHER"
+	}
+	if strings.HasPrefix(pathLabel, "/media/chunk/") {
+		pathLabel = "/media/chunk/*"
+	}
+	switch protocolLabel {
+	case "HTTP/1.0", "HTTP/1.1", "HTTP/2.0", "HTTP/3.0":
+	default:
+		protocolLabel = "OTHER"
+	}
 	t.mu.Lock()
-	t.stats.Requests[r.Method+" "+path]++
-	t.stats.Protocols[r.Proto]++
+	t.stats.Requests[methodLabel+" "+pathLabel]++
+	t.stats.Protocols[protocolLabel]++
 	t.mu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -166,3 +166,14 @@ Any HTTP envelope, sequence, authentication or flow-control failure aborts the
 session and closes affected local connections. There is no automatic retry,
 reconnect, stream migration or resume. Unit and integration tests establish
 correctness of these checks; they do not establish network camouflage.
+
+## Bounded diagnostic labels
+
+The private diagnostic counters keep static route names, aggregate all media
+chunk suffixes as `/media/chunk/*`, and retain only `GET`, `POST` or `OTHER`
+method labels. CONNECT has its separate counter. Protocol labels are
+`HTTP/1.0`, `HTTP/1.1`, `HTTP/2.0`, `HTTP/3.0` or `OTHER`. This bounds metric
+storage even for unauthenticated requests with arbitrary methods and paths.
+Routing, statuses and response bodies are unchanged. Historical research tools
+that expected one metric key per numbered chunk must use the aggregated key;
+the private counters are not part of the client wire contract.
