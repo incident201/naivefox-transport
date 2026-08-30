@@ -1,27 +1,28 @@
 package transport
 
 type appProfile struct {
-	Slots         []int  `json:"slots,omitempty"`
-	Rounds        int    `json:"rounds"`
-	Down          int    `json:"down"`
-	Duplex        bool   `json:"duplex"`
-	PaintEvery    int    `json:"paint_every"`
-	Streaming     any    `json:"streaming"`
-	Commit        bool   `json:"commit"`
-	Continuous    bool   `json:"continuous"`
-	LiveDuplex    bool   `json:"live_duplex"`
-	LeaseSlots    int    `json:"lease_slots"`
-	Bulk          bool   `json:"bulk"`
-	BulkDuplex    bool   `json:"bulk_duplex"`
-	ShortState    string `json:"short_state,omitempty"`
-	DeferredAck   bool   `json:"deferred_ack,omitempty"`
-	BulkAckOnly   bool   `json:"bulk_ack_only,omitempty"`
-	ReceiveWindow uint32 `json:"receive_window,omitempty"`
-	FillerOnly    bool   `json:"filler_only,omitempty"`
-	ProgressHint  bool   `json:"progress_hint,omitempty"`
-	PairBulk      bool   `json:"pair_bulk,omitempty"`
-	PipelineBulk  bool   `json:"pipeline_bulk,omitempty"`
-	IdleEvents    bool   `json:"idle_events,omitempty"`
+	Slots             []int  `json:"slots,omitempty"`
+	Rounds            int    `json:"rounds"`
+	Down              int    `json:"down"`
+	Duplex            bool   `json:"duplex"`
+	PaintEvery        int    `json:"paint_every"`
+	Streaming         any    `json:"streaming"`
+	Commit            bool   `json:"commit"`
+	Continuous        bool   `json:"continuous"`
+	LiveDuplex        bool   `json:"live_duplex"`
+	LeaseSlots        int    `json:"lease_slots"`
+	Bulk              bool   `json:"bulk"`
+	BulkDuplex        bool   `json:"bulk_duplex"`
+	ShortState        string `json:"short_state,omitempty"`
+	DeferredAck       bool   `json:"deferred_ack,omitempty"`
+	BulkAckOnly       bool   `json:"bulk_ack_only,omitempty"`
+	ReceiveWindow     uint32 `json:"receive_window,omitempty"`
+	FillerOnly        bool   `json:"filler_only,omitempty"`
+	ProgressHint      bool   `json:"progress_hint,omitempty"`
+	PairBulk          bool   `json:"pair_bulk,omitempty"`
+	PipelineBulk      bool   `json:"pipeline_bulk,omitempty"`
+	IdleEvents        bool   `json:"idle_events,omitempty"`
+	InteractiveDuplex bool   `json:"interactive_duplex,omitempty"`
 }
 
 var stagedSlots = []int{8192, 8192, 8192, 8192, 32768, 32768, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 8192, 8192}
@@ -64,6 +65,7 @@ var profiles = func() map[string]appProfile {
 	derive("continuous-bulk-pipeline", "continuous-bulk-pair", func(p *appProfile) { p.PipelineBulk = true })
 	derive("continuous-bulk-idle-events", "continuous-bulk-duplex", func(p *appProfile) { p.IdleEvents = true })
 	derive("continuous-bulk-pipeline-events", "continuous-bulk-pipeline", func(p *appProfile) { p.IdleEvents = true })
+	derive("continuous-bulk-pipeline-interactive", "continuous-bulk-pipeline", func(p *appProfile) { p.InteractiveDuplex = true })
 	return values
 }()
 

@@ -94,6 +94,10 @@ async function activeExchange(io, state, duplex) {
   return io.receive(duplex ? sent : await io.fetch("/api/data/" + state), capacity);
 }
 
+function activeDuplex(profile, state) {
+  return !!(profile.live_duplex || (state === "bulk" && profile.bulk_duplex) || (state === "interactive" && profile.interactive_duplex));
+}
+
 async function receiveIdle(response, events, receive) {
   if (events && response.status === 204) {
     if (response.headers.get("X-App-Capacity") !== null || (await response.arrayBuffer()).byteLength !== 0) throw new Error("idle heartbeat envelope");
@@ -103,4 +107,4 @@ async function receiveIdle(response, events, receive) {
   return receive(response, events ? 8192 : 512);
 }
 
-if (typeof module !== "undefined") module.exports = {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, bulkPair, receiveIdle};
+if (typeof module !== "undefined") module.exports = {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, activeDuplex, bulkPair, receiveIdle};

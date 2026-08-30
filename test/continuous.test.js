@@ -2,7 +2,16 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange} = require("../site/lifecycle.js");
+const {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, activeDuplex} = require("../site/lifecycle.js");
+
+test("interactive-only combined responses do not change upload or mixed states",()=>{
+  for(const state of ["interactive","download","upload","mixed","bulk"]){
+    assert.equal(activeDuplex({},state),false);
+    assert.equal(activeDuplex({live_duplex:true},state),true);
+    assert.equal(activeDuplex({bulk_duplex:true},state),state==="bulk");
+    assert.equal(activeDuplex({bulk_duplex:true,interactive_duplex:true},state),state==="bulk"||state==="interactive");
+  }
+});
 
 test("selective deferred delivery leaves small states, startup and frames acknowledged", () => {
   for(const phase of ["startup","idle","interactive","upload","mixed","bulk"]){

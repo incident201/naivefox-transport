@@ -81,3 +81,17 @@ func TestPipelineEventCompositionChangesOnlyIdle(t *testing.T) {
 		t.Fatal("confounded composition")
 	}
 }
+
+func TestInteractiveCompositionKeepsOtherStates(t *testing.T) {
+	got := profiles["continuous-bulk-pipeline-interactive"]
+	want := profiles["continuous-bulk-pipeline"]
+	if !got.InteractiveDuplex || want.InteractiveDuplex {
+		t.Fatal("interactive policy")
+	}
+	got.InteractiveDuplex = false
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(want)
+	if string(a) != string(b) {
+		t.Fatal("confounded interactive profile")
+	}
+}

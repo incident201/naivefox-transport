@@ -128,7 +128,7 @@ __NFC_LIFECYCLE__
         }:undefined,
         exchange:async state=>{
           manualWake=false;
-          const hint=await activeExchange({send:sendSlot,receive:receiveSlot,fetch:path=>fetch(path,{credentials:"same-origin"})},state,profile.live_duplex||(state==="bulk"&&profile.bulk_duplex));
+          const hint=await activeExchange({send:sendSlot,receive:receiveSlot,fetch:path=>fetch(path,{credentials:"same-origin"})},state,activeDuplex(profile,state));
           window.__NFC_DYNAMIC_ROUNDS__++;return hint;
         },
       },wake,profile.lease_slots,profile.bulk,profile.short_state||"");

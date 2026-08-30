@@ -128,6 +128,17 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-pipeline-interactive` combines only active interactive POSTs
+with their fixed 8-KiB responses (`/api/exchange/interactive`). It derives from
+plain pipeline, retaining four interactive slots and unchanged upload/mixed,
+startup, 512-byte idle responses and 512-KiB window. Other combined-exchange
+paths and the duplicate interactive GET are unavailable. This isolates the
+interactive RTT cost from the earlier all-active duplex upload-tail failure.
+
+The campaign was stopped before its performance test. This interactive-only
+profile is implemented and unit-tested but unmeasured; it is not the selected
+speed profile and has no residual qualification.
+
 `continuous-bulk-pipeline-events` composes the bounded pipeline and idle
 event/heartbeat split. It retains 512-KiB credit, two fixed bulk transactions,
 ordered local delivery and at most two HTTP responses. Only idle differs from
