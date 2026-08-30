@@ -53,3 +53,17 @@ func TestFillerProfileChangesOnlyEncoder(t *testing.T) {
 		t.Fatal("confounded profile")
 	}
 }
+
+func TestPairProfilesIsolateOverlap(t *testing.T) {
+	got := profiles["continuous-bulk-pipeline"]
+	want := profiles["continuous-bulk-pair"]
+	if !got.PipelineBulk || want.PipelineBulk || !got.PairBulk || got.ReceiveWindow != 524288 || got.FillerOnly || got.ProgressHint {
+		t.Fatal("pair controls")
+	}
+	got.PipelineBulk = false
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(want)
+	if string(a) != string(b) {
+		t.Fatal("confounded overlap")
+	}
+}

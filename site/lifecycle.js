@@ -49,10 +49,39 @@ async function runLifecycle(io, wake, slots = 4, bulk = false, shortState = "") 
     if (bulk && state === "download") state = "bulk";
     io.state(state);
     if (state === "idle") remote = await io.idle(observed);
+    else if (state === "bulk" && io.bulkLease) remote = await io.bulkLease();
     else {
       const length = state === "bulk" || state === shortState ? 1 : slots;
       for (let slot = 0; slot < length && io.alive(); slot++) remote = await io.exchange(state);
     }
+  }
+}
+
+// Two finite transactions per application lease. The second upload cannot
+// precede the first headers (server sequencing), or overlap local delivery IPC.
+async function bulkPair(io, pipeline) {
+  if (!pipeline) {
+    await activeExchange(io, "bulk", true);
+    return activeExchange(io, "bulk", true);
+  }
+  let first, following;
+  const abort = new AbortController();
+  const cancel = async response => { if (response && response.body) await response.body.cancel().catch(() => {}); };
+  try {
+    first = await io.send(16384, "/api/sync/bulk");
+    if (first.status !== 200) throw new Error("first bulk sync");
+    const body = await io.prepare(16384);
+    following = io.post(body, "/api/sync/bulk", abort.signal).then(value => ({value}), error => ({error}));
+    await io.receive(first, 262144);
+    const second = await following;
+    if (second.error) throw second.error;
+    if (second.value.status !== 200) throw new Error("second bulk sync");
+    return await io.receive(second.value, 262144);
+  } catch (error) {
+    abort.abort();
+    await cancel(first);
+    if (following) await cancel((await following).value);
+    throw error;
   }
 }
 
@@ -65,4 +94,4 @@ async function activeExchange(io, state, duplex) {
   return io.receive(duplex ? sent : await io.fetch("/api/data/" + state), capacity);
 }
 
-if (typeof module !== "undefined") module.exports = {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange};
+if (typeof module !== "undefined") module.exports = {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, bulkPair};

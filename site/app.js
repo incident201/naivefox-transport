@@ -28,6 +28,11 @@ __NFC_LIFECYCLE__
     else body=emptyCell(capacity);
     return fetch(endpoint,{method:"POST",body,credentials:"same-origin"});
   }
+  async function prepareSlot(capacity) {
+    if(!socket)return emptyCell(capacity);
+    const request=new Uint8Array(5);request[0]=1;new DataView(request.buffer).setUint32(1,capacity);
+    return ipc(request);
+  }
   async function receiveSlot(response, capacity) {
     if(!response.ok)throw new Error("events");
     const framing=profile.streaming==="frames"&&capacity===262144;
@@ -86,6 +91,7 @@ __NFC_LIFECYCLE__
     window.__NFC_EARLY_CELLS__=0;window.__NFC_EARLY_FILLER__=0;
     window.__NFC_FRAME_PARTS__=0;window.__NFC_EARLY_FRAME_PARTS__=0;window.__NFC_FRAME_BYTES_PENDING__=0;
     window.__NFC_DEFERRED_DELIVERIES__=0;
+    window.__NFC_BULK_PAIRS__=0;window.__NFC_PIPELINED_PAIRS__=0;
     window.__NFC_ACTION_DONE__=false;
     window.__NFC_PHASE__="startup";window.__NFC_ALIVE__=true;window.__NFC_DYNAMIC_ROUNDS__=0;window.__NFC_IDLE_POLLS__=0;window.__NFC_IDLE_WAKE_POSTS__=0;
     try {
@@ -113,6 +119,13 @@ __NFC_LIFECYCLE__
         pressure,
         state:value=>{window.__NFC_PHASE__=value;status.textContent=value==="idle"?"Waiting for updates.":"Synchronizing updates.";},
         idle,
+        bulkLease:profile.pair_bulk?async()=>{
+          manualWake=false;
+          const hint=await bulkPair({send:sendSlot,prepare:prepareSlot,
+            post:(body,path,signal)=>fetch(path,{method:"POST",body,credentials:"same-origin",signal}),receive:receiveSlot},profile.pipeline_bulk);
+          window.__NFC_BULK_PAIRS__++;if(profile.pipeline_bulk)window.__NFC_PIPELINED_PAIRS__++;
+          window.__NFC_DYNAMIC_ROUNDS__+=2;return hint;
+        }:undefined,
         exchange:async state=>{
           manualWake=false;
           const hint=await activeExchange({send:sendSlot,receive:receiveSlot,fetch:path=>fetch(path,{credentials:"same-origin"})},state,profile.live_duplex||(state==="bulk"&&profile.bulk_duplex));

@@ -128,6 +128,17 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-pair` and `continuous-bulk-pipeline` both derive from window512
+and commit to two 16/256-KiB exchanges per bulk lease. The first is serial; the
+second starts the next POST after the first response headers and after preparing
+its upload, but before delivering the first body. This bounds requests to two,
+keeps local IPC and response dispatch ordered, and needs no server reordering.
+Both responses finish/cancel before another state decision. Failed work aborts
+and drains/cancels the outstanding fetch. Startup/idle/other states are unchanged.
+No fast filler, progress hint or deferred ACK is mixed into this experiment.
+The pair has twice a single bulk lease's capacity and retains the 512-KiB
+window's memory cost; compare to the single-lease candidate before promotion.
+
 `continuous-bulk-progress` adds a productive-cell handoff to bulk-filler:
 at least 128 KiB useful data in a bulk cell and a not-yet-finished readable
 stream permit one subsequent bulk hint despite an empty instantaneous queue.

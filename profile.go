@@ -19,6 +19,8 @@ type appProfile struct {
 	ReceiveWindow uint32 `json:"receive_window,omitempty"`
 	FillerOnly    bool   `json:"filler_only,omitempty"`
 	ProgressHint  bool   `json:"progress_hint,omitempty"`
+	PairBulk      bool   `json:"pair_bulk,omitempty"`
+	PipelineBulk  bool   `json:"pipeline_bulk,omitempty"`
 }
 
 var stagedSlots = []int{8192, 8192, 8192, 8192, 32768, 32768, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 8192, 8192}
@@ -57,6 +59,8 @@ var profiles = func() map[string]appProfile {
 	derive("continuous-bulk-window512", "continuous-bulk-duplex", func(p *appProfile) { p.ReceiveWindow = 524288 })
 	derive("continuous-bulk-filler", "continuous-bulk-duplex", func(p *appProfile) { p.FillerOnly = true })
 	derive("continuous-bulk-progress", "continuous-bulk-filler", func(p *appProfile) { p.ProgressHint = true })
+	derive("continuous-bulk-pair", "continuous-bulk-window512", func(p *appProfile) { p.PairBulk = true })
+	derive("continuous-bulk-pipeline", "continuous-bulk-pair", func(p *appProfile) { p.PipelineBulk = true })
 	return values
 }()
 
