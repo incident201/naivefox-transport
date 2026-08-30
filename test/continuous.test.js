@@ -2,7 +2,16 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const {DeliveryFence, WakeLatch, activityState, runLifecycle, activeExchange} = require("../site/lifecycle.js");
+const {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange} = require("../site/lifecycle.js");
+
+test("selective deferred delivery leaves small states, startup and frames acknowledged", () => {
+  for(const phase of ["startup","idle","interactive","upload","mixed","bulk"]){
+    assert.equal(shouldDeferDelivery({},phase,false),false);
+    assert.equal(shouldDeferDelivery({deferred_ack:true},phase,false),phase!=="startup");
+    assert.equal(shouldDeferDelivery({deferred_ack:true,bulk_ack_only:true},phase,false),phase==="bulk");
+    assert.equal(shouldDeferDelivery({deferred_ack:true,bulk_ack_only:true},phase,true),false);
+  }
+});
 
 test("deferred delivery permits one cell until the next ordered command reply", () => {
   const fence=new DeliveryFence(),sent=[];

@@ -98,6 +98,7 @@ func TestFixedProfiles(t *testing.T) {
 	budgets["continuous-bulk-interactive1"] = 901120
 	budgets["continuous-bulk-upload1"] = 901120
 	budgets["continuous-bulk-noack"] = 901120
+	budgets["continuous-bulk-noack-download"] = 901120
 	if len(budgets) != len(profiles) {
 		t.Fatal("every profile requires a frozen budget")
 	}

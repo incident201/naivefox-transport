@@ -137,6 +137,10 @@ capacities are unchanged. Decoder errors close the connection; actual local
 socket writes still govern credit. This is private-loopback IPC optimization,
 not earlier local SOCKS success or optimistic target delivery.
 
+`continuous-bulk-noack-download` narrows this experiment to the bulk state;
+idle, interactive, upload and mixed delivery remain explicitly acknowledged.
+This isolates the small-request penalty found with all-active deferred ACKs.
+
 Two independent lease ablations retain bulk-duplex behavior:
 `continuous-bulk-interactive1` rechecks state after one interactive slot;
 `continuous-bulk-upload1` rechecks after one upload slot. They keep the other

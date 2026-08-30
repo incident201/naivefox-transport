@@ -10,6 +10,10 @@ class DeliveryFence {
   acknowledge() { this.pending = false; }
 }
 
+function shouldDeferDelivery(profile, phase, framing) {
+  return !!(profile.deferred_ack && !framing && phase !== "startup" && (!profile.bulk_ack_only || phase === "bulk"));
+}
+
 class WakeLatch {
   constructor() { this.version = 0; this.pending = null; }
   notify() {
@@ -61,4 +65,4 @@ async function activeExchange(io, state, duplex) {
   return io.receive(duplex ? sent : await io.fetch("/api/data/" + state), capacity);
 }
 
-if (typeof module !== "undefined") module.exports = {DeliveryFence, WakeLatch, activityState, runLifecycle, activeExchange};
+if (typeof module !== "undefined") module.exports = {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange};

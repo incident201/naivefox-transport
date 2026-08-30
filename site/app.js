@@ -35,7 +35,7 @@ __NFC_LIFECYCLE__
     const early=await readCarrier(response,capacity,downloadSequence++,streaming,async (result,fragment)=>{
       if(framing){window.__NFC_FRAME_PARTS__++;if(fragment.remaining>0)window.__NFC_EARLY_FRAME_PARTS__++;}
       if(socket){
-        const deferAck=profile.deferred_ack&&!framing&&window.__NFC_PHASE__!=="startup";
+        const deferAck=shouldDeferDelivery(profile,window.__NFC_PHASE__,framing);
         const message=new Uint8Array(result.length+(framing?2:1));message[0]=framing?6:deferAck?7:2;
         if(framing)message[1]=Number(fragment.final);message.set(result,framing?2:1);
         if(deferAck){if(pending)throw new Error("delivery during ipc");deliveryFence.send(socket,message);window.__NFC_DEFERRED_DELIVERIES__++;}
