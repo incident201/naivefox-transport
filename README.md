@@ -113,6 +113,11 @@ apply. This isolates active HTTP turnaround cost; it is not a larger body budget
 or a speculative concurrent stream. See the source-branch journal for paired
 speed/traffic admission before treating it as a preferred experiment profile.
 
+`continuous-sync2` is a separate follow-up: the same combined exchanges and
+body capacities, but a fixed two-slot active lease instead of four. This halves
+the capacity committed before checking state again (256 rather than 512 KiB
+for upload); it does not change per-stream credit or the startup/idle contract.
+
 ## Framing and limits
 
 Cells have a 16-byte `NFC1` header: big-endian cell sequence, used length,

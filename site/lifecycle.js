@@ -25,7 +25,8 @@ function activityState(pressure, remote) {
   return "idle";
 }
 
-async function runLifecycle(io, wake) {
+async function runLifecycle(io, wake, slots = 4) {
+  if (![2, 4].includes(slots)) throw new Error("invalid activity lease");
   let remote = "idle";
   while (io.alive()) {
     const observed = wake.version;
@@ -33,7 +34,7 @@ async function runLifecycle(io, wake) {
     io.state(state);
     if (state === "idle") remote = await io.idle(observed);
     else {
-      for (let slot = 0; slot < 4 && io.alive(); slot++) remote = await io.exchange(state);
+      for (let slot = 0; slot < slots && io.alive(); slot++) remote = await io.exchange(state);
     }
   }
 }

@@ -66,6 +66,20 @@ test("a lease has four slots even when pressure changes after its first slot", a
   assert.deepEqual(states, ["upload", "idle"]);
 });
 
+test("short leases keep two fixed slots and reject arbitrary per-packet counts", async () => {
+  let active = true, bytes = 65536;
+  const slots = [];
+  await runLifecycle({
+    alive: () => active,
+    pressure: async () => ({bytes, controls: 0}),
+    state() {},
+    exchange: async state => { slots.push(state); bytes = 0; return "idle"; },
+    idle: async () => { active = false; return "idle"; },
+  }, new WakeLatch(), 2);
+  assert.deepEqual(slots, ["upload", "upload"]);
+  for (const length of [0, 1, 3, 2.5, 5]) await assert.rejects(runLifecycle({}, new WakeLatch(), length), /invalid activity lease/);
+});
+
 test("server work wakes idle and starts a lease without completing the application", async () => {
   let active = true, idle = 0, slots = 0;
   await runLifecycle({
