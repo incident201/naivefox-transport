@@ -2,7 +2,7 @@
 (() => {
   const params = new URLSearchParams(location.hash.slice(1));
   const mode = new URLSearchParams(location.search).get("mode");
-  const rounds = Math.max(12, Math.min(256, Number(params.get("rounds")) || 12));
+  const rounds = Math.max(12, Math.min(256, Number(params.get("rounds")) || 16));
   let socket, pending, sequence = 0, running = false;
   const chart = document.getElementById("chart").getContext("2d");
   const status = document.getElementById("status");

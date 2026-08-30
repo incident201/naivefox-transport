@@ -14,7 +14,7 @@ is not a lean-runtime implementation.
 
 ## Fixed application profile
 
-The initial job consists of 12 rounds: two interactive, eight media-download,
+The v1 job consists of 16 rounds: two interactive, twelve media-download,
 two interactive. Each round performs one 4096-byte POST and one finite GET,
 followed by a browser animation callback. Interactive GET bodies are 24576 bytes;
 media GET bodies are 131072 bytes. Useful frames displace cryptographic filler.
@@ -31,6 +31,12 @@ This specific application/module is required: arbitrary existing websites do not
 satisfy the protocol. Idle polls, upload lifecycle and adaptive states are not
 implemented or qualified yet. A diagnostic round-count override is not the
 primary profile.
+
+The original 12-round profile admitted initial H2 transfers, but one repeated
+append-ablation run exhausted its usable slots with roughly 117 KiB outstanding.
+The incomplete comparison was not scored. V1 increases the declared lifecycle
+symmetrically for empty, replacement and append sessions, before new scoring.
+Its extra capacity is a real bandwidth cost, not a free optimization.
 
 ## Framing and limits
 
