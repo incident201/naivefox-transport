@@ -111,11 +111,17 @@ timeout, and two-minute session expiry without requests. A session has one
 ordered cell sequence per direction; there is no reconnect or resume. Each
 stream's byte sequence is 32-bit and fails closed beyond its range.
 
-The implementation is experimental. It does not promise production deployment
-hardening, denial-of-service resistance, managed key rotation, or that its
-traffic is indistinguishable from normal web browsing. Exact target allowlisting
-is intentional; do not expose an unrestricted dialer to solve configuration
-errors.
+The supported native contract is `continuous-bulk-pipeline` with `append_mode`
+disabled. Historical profile variants and the optional browser/bridge worker
+remain research tools, outside that native contract. Tests cover byte-window
+backpressure, small-frame coalescing, bounded scheduler and metric storage,
+stalled-upload isolation, cancellation, half-close and dual-transport routing.
+
+Deployment still requires operator-managed TLS, private credentials, an exact
+target allowlist, and appropriate exposure and resource limits. Key rotation
+is not automated. The tests do not establish resistance to every denial-of-service
+attack, performance parity, or traffic indistinguishability from web browsing.
+Do not expose an unrestricted dialer to solve configuration errors.
 
 ## Maintenance
 
