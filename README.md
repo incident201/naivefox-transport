@@ -128,6 +128,15 @@ speed and filler utilization must be measured before adopting this profile.
 
 ## Framing and limits
 
+`continuous-bulk-window512` changes only bulk-duplex's per-stream credit/budget
+from 256 to 512 KiB at both mux peers. Cell capacities, prefetch depth, HTTP
+concurrency and ACKs are unchanged. Bridge private `receive_window` configuration
+must match the server profile; zero retains 256 KiB, other values except 512 KiB
+are rejected. This prototype has no window negotiation. Worst-case additional
+outstanding receive bytes are 256 KiB per stream, 8 MiB over 32 streams per peer;
+prefetch/in-flight overhead is additional. Memory is spent explicitly, not hidden
+behind a state hint. This is an opt-in experiment, not a changed default.
+
 `continuous-bulk-noack` retains bulk-duplex and defers active/idle local
 delivery ACKs to the next already-required ordered pressure/take response.
 Local opcode 7 decodes/delivers a whole cell without a standalone reply. A

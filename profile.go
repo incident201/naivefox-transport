@@ -1,21 +1,22 @@
 package transport
 
 type appProfile struct {
-	Slots       []int  `json:"slots,omitempty"`
-	Rounds      int    `json:"rounds"`
-	Down        int    `json:"down"`
-	Duplex      bool   `json:"duplex"`
-	PaintEvery  int    `json:"paint_every"`
-	Streaming   any    `json:"streaming"`
-	Commit      bool   `json:"commit"`
-	Continuous  bool   `json:"continuous"`
-	LiveDuplex  bool   `json:"live_duplex"`
-	LeaseSlots  int    `json:"lease_slots"`
-	Bulk        bool   `json:"bulk"`
-	BulkDuplex  bool   `json:"bulk_duplex"`
-	ShortState  string `json:"short_state,omitempty"`
-	DeferredAck bool   `json:"deferred_ack,omitempty"`
-	BulkAckOnly bool   `json:"bulk_ack_only,omitempty"`
+	Slots         []int  `json:"slots,omitempty"`
+	Rounds        int    `json:"rounds"`
+	Down          int    `json:"down"`
+	Duplex        bool   `json:"duplex"`
+	PaintEvery    int    `json:"paint_every"`
+	Streaming     any    `json:"streaming"`
+	Commit        bool   `json:"commit"`
+	Continuous    bool   `json:"continuous"`
+	LiveDuplex    bool   `json:"live_duplex"`
+	LeaseSlots    int    `json:"lease_slots"`
+	Bulk          bool   `json:"bulk"`
+	BulkDuplex    bool   `json:"bulk_duplex"`
+	ShortState    string `json:"short_state,omitempty"`
+	DeferredAck   bool   `json:"deferred_ack,omitempty"`
+	BulkAckOnly   bool   `json:"bulk_ack_only,omitempty"`
+	ReceiveWindow uint32 `json:"receive_window,omitempty"`
 }
 
 var stagedSlots = []int{8192, 8192, 8192, 8192, 32768, 32768, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 65536, 8192, 8192}
@@ -51,6 +52,7 @@ var profiles = func() map[string]appProfile {
 	derive("continuous-bulk-upload1", "continuous-bulk-duplex", func(p *appProfile) { p.ShortState = "upload" })
 	derive("continuous-bulk-noack", "continuous-bulk-duplex", func(p *appProfile) { p.DeferredAck = true })
 	derive("continuous-bulk-noack-download", "continuous-bulk-noack", func(p *appProfile) { p.BulkAckOnly = true })
+	derive("continuous-bulk-window512", "continuous-bulk-duplex", func(p *appProfile) { p.ReceiveWindow = 524288 })
 	return values
 }()
 

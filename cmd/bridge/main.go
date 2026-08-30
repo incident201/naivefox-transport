@@ -24,15 +24,16 @@ import (
 )
 
 type config struct {
-	Key         string `json:"key"`
-	Token       string `json:"token"`
-	Origin      string `json:"origin"`
-	Certificate string `json:"certificate"`
-	PrivateKey  string `json:"private_key"`
-	Ready       string `json:"ready"`
-	Stats       string `json:"stats"`
-	Append      bool   `json:"append"`
-	Continuous  bool   `json:"continuous"`
+	Key           string `json:"key"`
+	Token         string `json:"token"`
+	Origin        string `json:"origin"`
+	Certificate   string `json:"certificate"`
+	PrivateKey    string `json:"private_key"`
+	Ready         string `json:"ready"`
+	Stats         string `json:"stats"`
+	Append        bool   `json:"append"`
+	Continuous    bool   `json:"continuous"`
+	ReceiveWindow uint32 `json:"receive_window"`
 }
 
 func main() {
@@ -60,7 +61,10 @@ func run(path string) error {
 	if len(cfg.Key) < 32 || len(cfg.Token) < 32 || cfg.Origin == "" {
 		return errors.New("configuration")
 	}
-	peer := mux.New(nil)
+	peer, err := mux.NewWithWindow(nil, cfg.ReceiveWindow)
+	if err != nil {
+		return err
+	}
 	defer peer.Close()
 	httpListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

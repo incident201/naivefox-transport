@@ -25,3 +25,17 @@ func TestPreviouslyMeasuredProfilesFrozen(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestWindowProfileChangesOnlyCredit(t *testing.T) {
+	got := profiles["continuous-bulk-window512"]
+	want := profiles["continuous-bulk-duplex"]
+	if got.ReceiveWindow != 524288 || want.ReceiveWindow != 0 {
+		t.Fatal("window")
+	}
+	got.ReceiveWindow = 0
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(want)
+	if string(a) != string(b) {
+		t.Fatal("confounded profile")
+	}
+}

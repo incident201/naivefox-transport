@@ -15,12 +15,13 @@ import (
 type DialFunc func(context.Context, string) (net.Conn, error)
 
 type Stats struct {
-	Opened      uint64 `json:"opened"`
-	Reset       uint64 `json:"reset"`
-	Received    uint64 `json:"received"`
-	Sent        uint64 `json:"sent"`
-	Delivered   uint64 `json:"delivered"`
-	PeakStreams int    `json:"peak_streams"`
+	ReceiveWindow uint32 `json:"receive_window"`
+	Opened        uint64 `json:"opened"`
+	Reset         uint64 `json:"reset"`
+	Received      uint64 `json:"received"`
+	Sent          uint64 `json:"sent"`
+	Delivered     uint64 `json:"delivered"`
+	PeakStreams   int    `json:"peak_streams"`
 }
 
 type stream struct {
@@ -60,6 +61,7 @@ type Peer struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	dial    DialFunc
+	window  uint32
 	streams map[uint32]*stream
 	order   []uint32
 	cursor  int
@@ -70,8 +72,21 @@ type Peer struct {
 }
 
 func New(dial DialFunc) *Peer {
+	peer, _ := NewWithWindow(dial, 0)
+	return peer
+}
+
+// NewWithWindow requires identical private configuration at both peers. Zero
+// retains the original window; only the bounded experimental double is allowed.
+func NewWithWindow(dial DialFunc, window uint32) (*Peer, error) {
+	if window == 0 {
+		window = cell.Window
+	}
+	if window != cell.Window && window != 2*cell.Window {
+		return nil, errors.New("unsupported receive window")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Peer{ctx: ctx, cancel: cancel, dial: dial, streams: make(map[uint32]*stream), changes: make(chan struct{}, 1)}
+	return &Peer{ctx: ctx, cancel: cancel, dial: dial, window: window, stats: Stats{ReceiveWindow: window}, streams: make(map[uint32]*stream), changes: make(chan struct{}, 1)}, nil
 }
 
 func (p *Peer) notify() {
@@ -108,7 +123,7 @@ func (p *Peer) Pressure() Pressure {
 
 func (p *Peer) newStream(id uint32) *stream {
 	ctx, cancel := context.WithCancel(p.ctx)
-	s := &stream{id: id, ctx: ctx, cancel: cancel, input: make(chan cell.Frame, 128), output: make(chan cell.Frame, 16), credit: cell.Window, budget: cell.Window}
+	s := &stream{id: id, ctx: ctx, cancel: cancel, input: make(chan cell.Frame, 128), output: make(chan cell.Frame, 16), credit: p.window, budget: p.window}
 	p.streams[id] = s
 	p.order = append(p.order, id)
 	p.stats.Opened++
@@ -310,7 +325,7 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 				return errors.New("credit format")
 			}
 			grant := binary.BigEndian.Uint32(f.Body)
-			if grant == 0 || grant > cell.Window-s.credit {
+			if grant == 0 || grant > p.window-s.credit {
 				return errors.New("credit overflow")
 			}
 			s.credit += grant

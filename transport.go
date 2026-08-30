@@ -175,7 +175,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 		return nil, err
 	}
 	s := &session{ip: ip, last: time.Now(), appendMode: t.AppendMode, wake: make(chan struct{}, 1)}
-	s.peer = mux.New(func(ctx context.Context, target string) (net.Conn, error) {
+	s.peer, err = mux.NewWithWindow(func(ctx context.Context, target string) (net.Conn, error) {
 		allowed := false
 		for _, value := range t.AllowedTargets {
 			if value == target {
@@ -187,7 +187,10 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 			return nil, errors.New("target denied")
 		}
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", target)
-	})
+	}, t.appProfile().ReceiveWindow)
+	if err != nil {
+		return nil, err
+	}
 	id := hex.EncodeToString(token)
 	t.sessions[id] = s
 	http.SetCookie(w, &http.Cookie{Name: "app_session", Value: id, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
