@@ -137,6 +137,25 @@ func (p *Peer) newStream(id uint32) *stream {
 	return s
 }
 
+// The caller holds mu. Retired IDs must not accumulate when the peer only
+// uploads OPEN/RESET cells and never calls Take to read a response.
+func (p *Peer) removeStream(id uint32) {
+	delete(p.streams, id)
+	for index, value := range p.order {
+		if value != id {
+			continue
+		}
+		p.order = append(p.order[:index], p.order[index+1:]...)
+		if index < p.cursor {
+			p.cursor--
+		}
+		if p.cursor >= len(p.order) {
+			p.cursor = 0
+		}
+		return
+	}
+}
+
 func (p *Peer) Open(conn net.Conn, authority string) (uint32, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -322,7 +341,7 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 				return errors.New("reset format")
 			}
 			s.close()
-			delete(p.streams, s.id)
+			p.removeStream(s.id)
 			p.stats.Reset++
 		case cell.Credit:
 			if len(f.Body) != 4 || f.Sequence != 0 {
@@ -366,15 +385,14 @@ func (p *Peer) Take(budget int) []cell.Frame {
 		}
 		if s.localFinSent && s.remoteFinWritten && s.grant == 0 {
 			s.close()
-			delete(p.streams, id)
-			misses++
+			p.removeStream(id)
 			continue
 		}
 		var f *cell.Frame
 		switch {
 		case s.reset:
 			f = &cell.Frame{Kind: cell.Reset, Stream: id}
-			delete(p.streams, id)
+			p.removeStream(id)
 		case s.open != nil:
 			if s.open.Size() <= budget {
 				f = s.open
@@ -426,18 +444,8 @@ func (p *Peer) Take(budget int) []cell.Frame {
 		misses = 0
 		if s.localFinSent && s.remoteFinWritten && s.grant == 0 {
 			s.close()
-			delete(p.streams, id)
+			p.removeStream(id)
 		}
-	}
-	if len(p.order) > 2*cell.MaxStreams {
-		order := []uint32{}
-		for _, id := range p.order {
-			if p.streams[id] != nil {
-				order = append(order, id)
-			}
-		}
-		p.order = order
-		p.cursor = 0
 	}
 	return frames
 }

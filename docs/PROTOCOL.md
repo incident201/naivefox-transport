@@ -95,6 +95,11 @@ additional. Slow readers stop credit replenishment instead of growing a queue
 without a bound. The server permits at most 128 sessions and expires sessions
 after two minutes without an HTTP request.
 
+The round-robin scheduler retains only active stream IDs. RESET and completed
+half-closes retire entries immediately; repeated short connections cannot grow
+the scheduler while the client omits downstream reads. Removing an entry keeps
+the next surviving stream's turn.
+
 ## Startup
 
 Each startup round sends one 4096-byte `POST /api/sync` (204, empty response),
