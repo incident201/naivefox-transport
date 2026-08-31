@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/caddyserver/forwardproxy"
 	"github.com/gorilla/websocket"
 	"github.com/incident201/naivefox-transport/internal/cell"
+	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
 type realtimeFixture struct {
@@ -322,5 +324,66 @@ func TestRealtimeCleanupClosesBlockedReader(t *testing.T) {
 	conn.SetReadDeadline(time.Now().Add(time.Second))
 	if _, _, err := conn.ReadMessage(); err == nil {
 		t.Fatal("session close kept websocket reader alive")
+	}
+}
+
+func TestRealtimeIdleAccountingExcludesAcknowledgements(t *testing.T) {
+	peer, err := mux.NewWithWindow(nil, 524288)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	s := &session{peer: peer, wake: make(chan struct{}, 1), down: 20, ackPending: true, ackSequence: 20}
+	module := &Transport{stats: counters{WSCellCapacities: make(map[string]uint64), CellCapacities: make(map[string]uint64)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	writerDone := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			close(writerDone)
+			return
+		}
+		defer conn.Close()
+		module.writeRealtime(ctx, conn, s, 10*time.Millisecond)
+		close(writerDone)
+	}))
+	defer server.Close()
+	dialer := websocket.Dialer{TLSClientConfig: server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()}
+	conn, _, err := dialer.Dial("wss"+strings.TrimPrefix(server.URL, "https"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	for index := range 3 {
+		conn.SetReadDeadline(time.Now().Add(time.Second))
+		kind, body, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sequence, frames, _, err := cell.Decode(body)
+		if kind != websocket.BinaryMessage || len(body) != 512 || err != nil || sequence != uint32(20+index) {
+			t.Fatal("idle application cell")
+		}
+		if index == 0 {
+			if len(frames) != 1 || frames[0].Kind != cell.Ack {
+				t.Fatal("initial ACK control")
+			}
+		} else if len(frames) != 0 {
+			t.Fatal("idle timeout contained application frames")
+		}
+	}
+	cancel()
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("idle writer did not cancel")
+	}
+	module.mu.Lock()
+	defer module.mu.Unlock()
+	if module.stats.IdleHeartbeats < 2 || module.stats.WSMessagesOut != module.stats.IdleHeartbeats+1 || module.stats.WSCellCapacities["out 512"] != module.stats.WSMessagesOut {
+		t.Fatal("ACK and idle heartbeat accounting")
 	}
 }

@@ -162,7 +162,7 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}()
-	t.writeRealtime(ctx, conn, s)
+	t.writeRealtime(ctx, conn, s, 25*time.Second)
 	conn.Close()
 	<-readerDone
 	return nil
@@ -218,10 +218,11 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	return nil
 }
 
-func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *session) {
-	heartbeat := time.NewTimer(25 * time.Second)
+func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *session, idleInterval time.Duration) {
+	heartbeat := time.NewTimer(idleInterval)
 	defer heartbeat.Stop()
 	for {
+		idleHeartbeat := false
 		pressure := s.peer.Pressure()
 		s.mu.Lock()
 		ack := s.ackPending
@@ -233,6 +234,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			case <-s.peer.Done():
 				return
 			case <-heartbeat.C:
+				idleHeartbeat = true
 			case <-s.peer.Changes():
 				continue
 			case <-s.wake:
@@ -291,6 +293,9 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			}
 		}
 		t.mu.Lock()
+		if idleHeartbeat && len(frames) == 0 {
+			t.stats.IdleHeartbeats++
+		}
 		t.stats.WSMessagesOut++
 		t.stats.WSCellCapacities["out "+strconv.Itoa(capacity)]++
 		t.stats.DownloadBytes += uint64(len(body))
@@ -298,6 +303,6 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 		t.stats.DownloadUseful += useful
 		t.stats.CellCapacities[strconv.Itoa(capacity)]++
 		t.mu.Unlock()
-		heartbeat.Reset(25 * time.Second)
+		heartbeat.Reset(idleInterval)
 	}
 }
