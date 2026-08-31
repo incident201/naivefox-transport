@@ -162,11 +162,49 @@ active connections. Keep `/var/lib/caddy` and certificate storage unchanged.
 Rollback restores the old Caddyfile and executable path. Docker deployments
 replace their container image instead. Never restart after failed validation.
 
+For the usual `/etc/caddy/Caddyfile` service, a concrete upgrade sequence is:
+
+```sh
+sudo cp -a /etc/caddy/Caddyfile /etc/caddy/Caddyfile.before-naivefox
+sudo install -m 755 ./caddy-linux-amd64 /usr/local/bin/caddy-naivefox
+sudoedit /etc/caddy/Caddyfile
+# Move the existing forward_proxy block into naivefox_transport as shown above.
+sudo -u caddy /usr/local/bin/caddy-naivefox validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl edit caddy
+```
+
+In the override editor, use the following if those are your actual config path
+and service arguments. Preserve any existing environment-file settings. If the
+Caddyfile uses environment placeholders, supply the same environment during
+validation; an interactive shell does not inherit the service environment.
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/caddy-naivefox run --config /etc/caddy/Caddyfile --adapter caddyfile
+ExecReload=
+ExecReload=/usr/local/bin/caddy-naivefox reload --config /etc/caddy/Caddyfile --adapter caddyfile --force
+```
+
+Do not retain `--environ` when credentials are in environment variables: that
+flag prints the entire environment to the journal. After successful validation:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl restart caddy
+sudo systemctl status caddy --no-pager
+```
+
+The packaged `/usr/bin/caddy` and certificate storage are left in place, and
+package upgrades do not overwrite the custom binary under `/usr/local/bin`.
+To roll back, restore the saved Caddyfile, remove only these two executable
+overrides, reload systemd, and restart the service with its original executable.
+
 The native client requires `X-App-Profile: continuous-bulk-pipeline` and
 `X-App-Auth: basic` on the initial `GET /` response before it sends AUTH.
 These headers are emitted only for
-the root handshake, reports the resolved profile even when configuration omits
-it, and prevents accidental use of a different credit window. Older experimental
+the root handshake, report the resolved profile even when configuration omits
+it, and prevent accidental use of a different credit window. Older experimental
 server binaries without the header must be upgraded for native no-connect.
 See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 
