@@ -1,0 +1,124 @@
+name: Release Caddy for Linux x86_64
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: caddy-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.metadata.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.12'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test server and browser protocol
+        run: |
+          bash tools/go.sh go mod verify
+          bash tools/go.sh go test -race ./...
+          node --test test/*.test.js
+      - name: Build Caddy with both proxy modules
+        run: |
+          GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 XCADDY="$PWD/artifacts/bin/xcaddy" bash tools/build.sh
+      - name: Test the release binary
+        run: |
+          artifacts/bin/caddy version
+          artifacts/bin/caddy list-modules --packages > artifacts/modules.txt
+          grep -E '^http\.handlers\.forward_proxy[[:space:]]+github.com/caddyserver/forwardproxy' artifacts/modules.txt
+          grep -E '^http\.handlers\.forward_proxy.*=> github.com/klzgrad/forwardproxy' artifacts/modules.txt
+          grep -E '^http\.handlers\.naivefox_transport[[:space:]]+github.com/incident201/naivefox-transport' artifacts/modules.txt
+          NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .
+      - name: Prepare binary, checksum, and provenance
+        id: metadata
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="caddy-$(date -u +%Y%m%d)-${SOURCE_SHA:0:12}"
+          if [[ "$REF_TYPE" == tag ]]; then tag="$REF_NAME"; fi
+          [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          mkdir dist
+          install -m 755 artifacts/bin/caddy dist/caddy-linux-amd64
+          (cd dist && sha256sum caddy-linux-amd64 > caddy-linux-amd64.sha256)
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          binary = pathlib.Path('dist/caddy-linux-amd64')
+          build_info = subprocess.check_output(['go', 'version', '-m', str(binary)], text=True).splitlines()
+          expected_proxy = ['=>', 'github.com/klzgrad/forwardproxy', 'v0.0.0-20250118002110-d62c80d3dd2c']
+          assert any(line.split()[:3] == expected_proxy for line in build_info), 'release must use the pinned, unchanged ordinary forwardproxy'
+          assert not any('github.com/incident201/forwardproxy' in line for line in build_info), 'custom forwardproxy is forbidden'
+          data = {
+              'source_repository': os.environ['GITHUB_REPOSITORY'],
+              'source_commit': os.environ['SOURCE_SHA'],
+              'workflow_run': f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              'platform': 'linux/amd64', 'cgo_enabled': False,
+              'caddy': 'v2.11.2', 'xcaddy': 'v0.4.6',
+              'go': subprocess.check_output(['go', 'version'], text=True).strip(),
+              'go_build_info': build_info,
+              'binary': binary.name,
+              'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+              'modules': pathlib.Path('artifacts/modules.txt').read_text().splitlines(),
+          }
+          pathlib.Path('dist/build-info.json').write_text(json.dumps(data, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caddy-linux-amd64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: caddy-linux-amd64
+          path: dist
+      - name: Publish tested binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check caddy-linux-amd64.sha256)
+          cat > release-notes.md <<EOF
+          Caddy 2.11.2 for Linux x86_64 with both forward_proxy and naivefox_transport.
+
+          Both transports share the credentials and access policy of the nested forward_proxy block. No additional transport key or destination allowlist is needed.
+
+          Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
+
+          Download caddy-linux-amd64 and caddy-linux-amd64.sha256, verify with sha256sum --check caddy-linux-amd64.sha256, and follow the README for safe installation or replacement of an existing Caddy binary. Configuration, certificates, and the systemd service do not need to be reinstalled.
+
+          Build and runtime checks passed in this workflow before publication.
+          EOF
+          gh release create "$RELEASE_TAG" dist/caddy-linux-amd64 dist/caddy-linux-amd64.sha256 dist/build-info.json \
+            --target "$SOURCE_SHA" --title "Caddy 2.11.2 + NaiveFox transport ($RELEASE_TAG)" \
+            --notes-file release-notes.md
