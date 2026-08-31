@@ -37,6 +37,8 @@ type Transport struct {
 	ForwardProxy *forwardproxy.Handler `json:"forward_proxy"`
 	MaxSessions  int                   `json:"max_sessions,omitempty"`
 	Diagnostics  bool                  `json:"diagnostics,omitempty"`
+	authHashes   [][32]byte
+	policy       *tcpPolicy
 	// Retain old field names only to reject migrations explicitly, including
 	// empty values. They never authorize a session or limit destinations.
 	LegacyKey     json.RawMessage `json:"key,omitempty"`
@@ -235,7 +237,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 		if !authed {
 			return nil, errors.New("unauthenticated stream")
 		}
-		return t.ForwardProxy.DialContext(ctx, "tcp", target)
+		return t.policy.DialContext(ctx, target)
 	}, t.appProfile().ReceiveWindow)
 	if err != nil {
 		return nil, err

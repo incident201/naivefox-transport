@@ -4,11 +4,12 @@ go 1.25.0
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.2
-	github.com/caddyserver/forwardproxy v0.0.0-20260831051634-7f5bad724696
+	github.com/caddyserver/forwardproxy v0.0.0-20250118002110-d62c80d3dd2c
 	github.com/gorilla/websocket v1.5.3
+	golang.org/x/net v0.51.0
 )
 
-replace github.com/caddyserver/forwardproxy => github.com/incident201/forwardproxy v0.0.0-20260831051634-7f5bad724696
+replace github.com/caddyserver/forwardproxy => github.com/klzgrad/forwardproxy v0.0.0-20250118002110-d62c80d3dd2c
 
 require (
 	cel.dev/expr v0.25.1 // indirect
@@ -116,7 +117,6 @@ require (
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260213171211-a408498e5541 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect

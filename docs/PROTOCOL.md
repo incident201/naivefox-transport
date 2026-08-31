@@ -77,8 +77,11 @@ length. Frames must exactly occupy the used prefix; filler contains no frames.
 
 Stream IDs are nonzero, monotonically increasing and never reused in a session.
 OPEN accepts any valid TCP `host:port`; no per-destination allowlist is required.
-The shared forwardproxy handler enforces its normal ACL, ports, upstream and
-dial timeout for both transports. Forwardproxy defaults to 30 seconds; set
+The single ordinary forwardproxy configuration supplies ACL, ports, upstream
+and dial timeout for both transports. The no-connect module evaluates that
+public policy configuration with parity tests against the original handler.
+An upstream delegates DNS, ACL and port policy instead of filtering locally,
+as ordinary forwardproxy does. Forwardproxy defaults to 30 seconds; set
 `dial_timeout` to change it. Failed or denied dials produce RESET. A native client must wait for OPENED before
 reporting local proxy success; the historical Go bridge was optimistic.
 

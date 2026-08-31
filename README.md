@@ -91,18 +91,20 @@ For xcaddy builds elsewhere, use the published module path:
 
 ```sh
 xcaddy build v2.11.2 \
-  --with github.com/caddyserver/forwardproxy=github.com/incident201/forwardproxy@7f5bad724696e153716b1c9222176ba0ba05d543 \
+  --with github.com/caddyserver/forwardproxy@v0.0.0-20250118002110-d62c80d3dd2c=github.com/klzgrad/forwardproxy@v0.0.0-20250118002110-d62c80d3dd2c \
   --with github.com/incident201/naivefox-transport
 ```
 
 Install xcaddy with `go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6`.
 Pin this module to a reviewed release revision in deployment automation. Append
 one `--with module@version` for each additional plugin in your current Caddy.
-The small [forwardproxy fork](https://github.com/incident201/forwardproxy) starts
-at klzgrad `d62c80d3dd2c` and exposes authentication and cancellable policy dialing
-from the actual handler. The original unmodified module lacks these APIs.
-There is no second HTTP/TLS stack. These Go dependencies are server-only and
-never enter the lean C++ client build graph.
+This build uses the **ordinary, unmodified** klzgrad forwardproxy `naive` branch,
+pinned to `d62c80d3dd2c`. No private fork, vendored replacement or private API is
+needed. The transport reads the handler's public credential and policy settings;
+its small TCP policy engine and upstream dialer are covered by differential
+tests against that actual module. Caddy still owns the client-facing HTTP/TLS
+stack. These Go dependencies are server-only and never enter the lean C++ client
+build graph.
 
 ## Serve classic and no-connect together
 
@@ -137,10 +139,14 @@ accounts work in both modes. Then validate with the **new** binary:
 ```
 
 Both transports use the nested handler's credentials, `acl`, `ports`, `upstream`
-and `dial_timeout`. Public hostnames and ports do not need individual entries.
+and `dial_timeout` configuration. Public hostnames and ports do not need individual entries.
 Forwardproxy's ordinary default protection against private/LAN destinations
 still applies; use its normal ACL to intentionally allow such destinations.
-No no-connect-only target allowlist exists.
+No no-connect-only target allowlist exists. As in ordinary forwardproxy, an
+explicit `upstream` delegates destination DNS, ACL and port policy to that
+upstream instead of enforcing those local destination rules. No-connect
+performs cancellable dialing, preserves TCP half-close and validates HTTPS
+upstream certificates, including on loopback.
 
 The module serves `/` and its application/assets routes. An existing root page
 on that site is replaced. Classic H3 startup remains supported. Other requests
@@ -169,8 +175,10 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 The JSON handler name is `naivefox_transport`; its `forward_proxy` object holds
 the ordinary forwardproxy options without a second `handler` field. Credentials
 must be configured; a missing list or an entirely empty username/password pair
-fails validation. One empty component is accepted for classic compatibility,
-but use a strong password. Use HTTPS with certificate validation. Keep private
+fails validation: the native classic client sends no authentication for an
+entirely empty pair. One empty component in JSON is accepted for compatibility;
+the Caddyfile keeps the ordinary forwardproxy parser's username rules. Use a
+strong password and HTTPS with certificate validation. Keep private
 configs, logs, TLS keys and captures outside Git.
 
 For migration, upgrade both server and client. Remove server `key` and
