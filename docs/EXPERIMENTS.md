@@ -1,3 +1,10 @@
+# Historical experiment settings
+
+References below to private transport keys and exact target allowlists describe
+the original prototype only. Current deployment uses one nested forwardproxy
+username/password configuration and shared destination policy. See
+[the current README](../README.md) and [protocol contract](PROTOCOL.md).
+
 # Application-capacity transport laboratory
 
 Experimental Caddy module and loopback bridge for the NaiveFox application-carrier

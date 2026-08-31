@@ -65,7 +65,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	}
 	config := "{\n admin off\n auto_https off\n}\n" + string(example)
 	config = strings.Replace(config, "\troute {", fmt.Sprintf("\ttls %s %s\n\troute {", certFile, keyFile), 1)
-	config = strings.Replace(config, "\t\tforward_proxy {", "\t\tforward_proxy {\n\t\t\tacl {\n\t\t\t\tallow 127.0.0.1\n\t\t\t}", 1)
+	config = strings.Replace(config, "\t\t\tforward_proxy {", "\t\t\tforward_proxy {\n\t\t\t\tacl {\n\t\t\t\t\tallow 127.0.0.1\n\t\t\t\t}", 1)
 	configFile := filepath.Join(dir, "Caddyfile")
 	if err := os.WriteFile(configFile, []byte(config), 0600); err != nil {
 		t.Fatal(err)
@@ -75,14 +75,11 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer log.Close()
-	key := strings.Repeat("n", 64)
 	cmd := exec.Command(binary, "run", "--adapter", "caddyfile", "--config", configFile)
 	cmd.Env = append(os.Environ(),
 		"XDG_CONFIG_HOME="+dir, "XDG_DATA_HOME="+dir,
 		"NAIVEFOX_SERVER=https://"+address,
-		"NAIVEFOX_TRANSPORT_KEY="+key,
-		"NAIVEFOX_ALLOWED_TARGETS="+target.Addr().String(),
-		"NAIVEFOX_CLASSIC_USER=fixture", "NAIVEFOX_CLASSIC_PASSWORD=fixture")
+		"NAIVEFOX_USER=fixture", "NAIVEFOX_PASSWORD=fixture")
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -99,7 +96,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
-			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || len(body) != 4096 || response.Header.Get("X-App-Profile") != defaultProfile {
+			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || len(body) != 4096 || response.Header.Get("X-App-Profile") != defaultProfile || response.Header.Get("X-App-Auth") != "basic" {
 				t.Fatalf("origin handshake: status=%d protocol=%s length=%d read=%v", response.StatusCode, response.Proto, len(body), readErr)
 			}
 			break
@@ -150,7 +147,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 			t.Fatalf("no-connect upload status: %d", response.StatusCode)
 		}
 	}
-	upload(0, []cell.Frame{{Kind: cell.Auth, Body: []byte(key)}, {Kind: cell.Open, Stream: 1, Body: []byte(target.Addr().String())}})
+	upload(0, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}, {Kind: cell.Open, Stream: 1, Body: []byte(target.Addr().String())}})
 	var sequence uint32
 	downloadUntil := func(done func([]cell.Frame) bool) {
 		t.Helper()

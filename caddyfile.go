@@ -4,6 +4,8 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/caddyserver/forwardproxy"
+	"strconv"
 )
 
 func init() {
@@ -16,7 +18,7 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 }
 
 // UnmarshalCaddyfile reads the handler's explicit configuration. Use it inside
-// a route block before forward_proxy so CONNECT falls through unchanged.
+// a route block with one nested forward_proxy for both transports.
 func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	seen := make(map[string]bool)
 	for d.Next() {
@@ -25,14 +27,27 @@ func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		}
 		for d.NextBlock(0) {
 			name := d.Val()
-			if seen[name] && name != "allowed_targets" {
+			if seen[name] {
 				return d.Errf("duplicate naivefox_transport option %q", name)
 			}
 			seen[name] = true
 			switch name {
-			case "key":
-				if !d.AllArgs(&t.Key) {
+			case "max_sessions":
+				var value string
+				if !d.AllArgs(&value) {
 					return d.ArgErr()
+				}
+				limit, err := strconv.Atoi(value)
+				if err != nil || limit <= 0 {
+					return d.Err("max_sessions must be a positive integer")
+				}
+				t.MaxSessions = limit
+			case "key", "allowed_targets":
+				return d.Errf("%s was removed; nest forward_proxy inside naivefox_transport and configure basic_auth once for both transports", name)
+			case "forward_proxy":
+				t.ForwardProxy = new(forwardproxy.Handler)
+				if err := t.ForwardProxy.UnmarshalCaddyfile(d.NewFromNextSegment()); err != nil {
+					return err
 				}
 			case "profile":
 				if !d.AllArgs(&t.Profile) {
@@ -42,12 +57,6 @@ func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.AllArgs(&t.StatsPath) {
 					return d.ArgErr()
 				}
-			case "allowed_targets":
-				values := d.RemainingArgs()
-				if len(values) == 0 {
-					return d.ArgErr()
-				}
-				t.AllowedTargets = append(t.AllowedTargets, values...)
 			case "append_mode":
 				if d.NextArg() {
 					return d.ArgErr()

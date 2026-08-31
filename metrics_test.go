@@ -4,16 +4,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"testing"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
 func TestUntrustedRequestLabelsRemainBounded(t *testing.T) {
-	module := &Transport{Key: strings.Repeat("a", 32), AllowedTargets: []string{"localhost:9"}}
-	if err := module.Provision(caddy.Context{}); err != nil {
+	module := &Transport{ForwardProxy: testForwardProxy()}
+	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
@@ -23,7 +21,7 @@ func TestUntrustedRequestLabelsRemainBounded(t *testing.T) {
 	})
 	const requests = 4096
 	for index := 0; index < requests; index++ {
-		r := httptest.NewRequest("UNSUPPORTED"+strconv.Itoa(index), "https://localhost/media/chunk/"+strconv.Itoa(index), nil)
+		r := testRequest("UNSUPPORTED"+strconv.Itoa(index), "https://localhost/media/chunk/"+strconv.Itoa(index), nil)
 		r.Proto = "UNKNOWN/" + strconv.Itoa(index)
 		w := httptest.NewRecorder()
 		if err := module.ServeHTTP(w, r, next); err != nil || w.Code != 400 {
@@ -35,7 +33,7 @@ func TestUntrustedRequestLabelsRemainBounded(t *testing.T) {
 	}
 	for _, path := range []string{"/media/chunk/6", "/media/chunk/17", "/api/events/brief"} {
 		w := httptest.NewRecorder()
-		if err := module.ServeHTTP(w, httptest.NewRequest("GET", "https://localhost"+path, nil), next); err != nil || w.Code != 400 {
+		if err := module.ServeHTTP(w, testRequest("GET", "https://localhost"+path, nil), next); err != nil || w.Code != 400 {
 			t.Fatal("unauthenticated GET changed behavior")
 		}
 	}

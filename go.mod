@@ -4,8 +4,11 @@ go 1.25.0
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.2
+	github.com/caddyserver/forwardproxy v0.0.0-20260831051634-7f5bad724696
 	github.com/gorilla/websocket v1.5.3
 )
+
+replace github.com/caddyserver/forwardproxy => github.com/incident201/forwardproxy v0.0.0-20260831051634-7f5bad724696
 
 require (
 	cel.dev/expr v0.25.1 // indirect

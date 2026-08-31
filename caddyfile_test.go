@@ -2,35 +2,36 @@ package transport
 
 import (
 	"bytes"
+	"github.com/caddyserver/forwardproxy"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
-	"strings"
 	"testing"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
 func TestCaddyfileConfiguration(t *testing.T) {
 	input := `naivefox_transport {
-		key abcdefghijklmnopqrstuvwxyz012345
-		profile continuous-bulk-pipeline
-		allowed_targets example.com:443 [::1]:8080
-		allowed_targets localhost:9090
-		stats_path /tmp/transport-stats.json
-	}`
+        profile continuous-bulk-pipeline
+        forward_proxy {
+            basic_auth fixture fixture
+            basic_auth second p:a:ss
+            hide_ip
+            hide_via
+            probe_resistance
+        }
+        stats_path /tmp/transport-stats.json
+    }`
 	var handler Transport
 	if err := handler.UnmarshalCaddyfile(caddyfile.NewTestDispenser(input)); err != nil {
 		t.Fatal(err)
 	}
-	if handler.Key != "abcdefghijklmnopqrstuvwxyz012345" || handler.Profile != defaultProfile || handler.StatsPath != "/tmp/transport-stats.json" || handler.AppendMode || !reflect.DeepEqual(handler.AllowedTargets, []string{"example.com:443", "[::1]:8080", "localhost:9090"}) {
+	if handler.Profile != defaultProfile || handler.StatsPath != "/tmp/transport-stats.json" || handler.AppendMode || handler.ForwardProxy == nil || len(handler.ForwardProxy.AuthCredentials) != 2 || !bytes.Equal(handler.ForwardProxy.AuthCredentials[1], forwardproxy.EncodeAuthCredentials("second", "p:a:ss")) {
 		t.Fatal("configuration changed")
 	}
-	// Provision validates the same explicit key/allowlist contract as JSON.
 	handler.StatsPath = ""
-	if err := handler.Provision(caddy.Context{}); err != nil {
+	if err := handler.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer handler.Cleanup()
@@ -47,6 +48,9 @@ func TestCaddyfileRejectsAmbiguousOptions(t *testing.T) {
 		"naivefox_transport {\n stats_path\n}",
 		"naivefox_transport {\n append_mode true\n}",
 		"naivefox_transport {\n allow_all\n}",
+		"naivefox_transport {\n max_sessions 0\n}",
+		"naivefox_transport {\n max_sessions -1\n}",
+		"naivefox_transport {\n max_sessions many\n}",
 	} {
 		t.Run(input, func(t *testing.T) {
 			var handler Transport
@@ -60,8 +64,8 @@ func TestCaddyfileRejectsAmbiguousOptions(t *testing.T) {
 func TestProfileHandshakeAndCoexistingHandler(t *testing.T) {
 	for _, configured := range []string{"", defaultProfile, "continuous-v1"} {
 		t.Run(configured, func(t *testing.T) {
-			handler := &Transport{Profile: configured, Key: strings.Repeat("a", 32), AllowedTargets: []string{"localhost:9"}}
-			if err := handler.Provision(caddy.Context{}); err != nil {
+			handler := &Transport{Profile: configured, ForwardProxy: testForwardProxy()}
+			if err := handler.Provision(testCaddyContext(t)); err != nil {
 				t.Fatal(err)
 			}
 			defer handler.Cleanup()
@@ -76,14 +80,14 @@ func TestProfileHandshakeAndCoexistingHandler(t *testing.T) {
 			})
 			for _, path := range []string{"/", "/assets/app.js", "/assets/site.css"} {
 				w := httptest.NewRecorder()
-				if err := handler.ServeHTTP(w, httptest.NewRequest("GET", "https://localhost"+path, nil), next); err != nil {
+				if err := handler.ServeHTTP(w, testRequest("GET", "https://localhost"+path, nil), next); err != nil {
 					t.Fatal(err)
 				}
 				expected := ""
 				if path == "/" {
 					expected = handler.profileName()
 				}
-				if w.Code != 200 || w.Header().Get("X-App-Profile") != expected {
+				if w.Code != 200 || w.Header().Get("X-App-Profile") != expected || (path == "/" && w.Header().Get("X-App-Auth") != "basic") {
 					t.Fatalf("profile handshake on %s: %d %q", path, w.Code, w.Header().Get("X-App-Profile"))
 				}
 			}
@@ -92,7 +96,7 @@ func TestProfileHandshakeAndCoexistingHandler(t *testing.T) {
 				if method == "CONNECT" {
 					target = "example.com:443"
 				}
-				r := httptest.NewRequest(method, target, bytes.NewReader([]byte("unchanged")))
+				r := testRequest(method, target, bytes.NewReader([]byte("unchanged")))
 				r.Header.Set("Proxy-Authorization", "Basic fixture")
 				w := httptest.NewRecorder()
 				if err := handler.ServeHTTP(w, r, next); err != nil {

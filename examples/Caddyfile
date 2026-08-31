@@ -1,18 +1,14 @@
 # Set all environment variables before starting Caddy. No credentials belong here.
 # NAIVEFOX_SERVER: the HTTPS hostname (for example proxy.example.com).
-# NAIVEFOX_ALLOWED_TARGETS: exact space-separated host:port destinations.
 {$NAIVEFOX_SERVER} {
 	route {
 		naivefox_transport {
-			key {$NAIVEFOX_TRANSPORT_KEY}
-			allowed_targets {$NAIVEFOX_ALLOWED_TARGETS}
-			profile continuous-bulk-pipeline
-		}
-		forward_proxy {
-			basic_auth {$NAIVEFOX_CLASSIC_USER} {$NAIVEFOX_CLASSIC_PASSWORD}
-			hide_ip
-			hide_via
-			probe_resistance
+			forward_proxy {
+				basic_auth {$NAIVEFOX_USER} {$NAIVEFOX_PASSWORD}
+				hide_ip
+				hide_via
+				probe_resistance
+			}
 		}
 		respond 404
 	}

@@ -43,6 +43,7 @@ type stream struct {
 	budget           uint32
 	grant            uint32
 	nextIn           uint32
+	nextOut          uint32 // owned by read; byte offsets wrap modulo 2^32
 	remoteFin        bool
 	remoteFinWritten bool
 	localFinSent     bool
@@ -200,20 +201,15 @@ func (p *Peer) fail(s *stream) {
 
 func (p *Peer) read(s *stream, conn net.Conn) {
 	defer p.wg.Done()
-	var sequence uint32
 	for {
 		body := make([]byte, streamChunk)
 		n, err := conn.Read(body)
 		if n > 0 {
-			if uint64(sequence)+uint64(n) > uint64(^uint32(0)) {
-				p.fail(s)
-				return
-			}
-			f := cell.Frame{Kind: cell.Data, Stream: s.id, Sequence: sequence, Body: body[:n]}
+			f := cell.Frame{Kind: cell.Data, Stream: s.id, Sequence: s.nextOut, Body: body[:n]}
 			s.queuedBytes.Add(int64(n))
 			select {
 			case s.output <- f:
-				sequence += uint32(n)
+				s.nextOut += uint32(n)
 				p.notify()
 			case <-s.ctx.Done():
 				s.queuedBytes.Add(-int64(n))
@@ -223,7 +219,7 @@ func (p *Peer) read(s *stream, conn net.Conn) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				select {
-				case s.output <- cell.Frame{Kind: cell.Fin, Stream: s.id, Sequence: sequence}:
+				case s.output <- cell.Frame{Kind: cell.Fin, Stream: s.id, Sequence: s.nextOut}:
 					p.notify()
 				case <-s.ctx.Done():
 				}
@@ -353,7 +349,7 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 		}
 		switch f.Kind {
 		case cell.Data:
-			if s.remoteFin || f.Sequence != s.nextIn || len(f.Body) == 0 || uint64(len(f.Body)) > uint64(s.budget) || uint64(s.nextIn)+uint64(len(f.Body)) > uint64(^uint32(0)) {
+			if s.remoteFin || f.Sequence != s.nextIn || len(f.Body) == 0 || uint64(len(f.Body)) > uint64(s.budget) {
 				return errors.New("data sequence or credit")
 			}
 			s.enqueueData(f)

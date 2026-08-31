@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/caddyserver/forwardproxy"
 	"github.com/incident201/naivefox-transport/internal/cell"
 	"github.com/incident201/naivefox-transport/internal/mux"
 )
@@ -31,16 +31,20 @@ var site embed.FS
 func init() { caddy.RegisterModule(Transport{}) }
 
 type Transport struct {
-	Profile        string   `json:"profile,omitempty"`
-	AppendMode     bool     `json:"append_mode,omitempty"`
-	StatsPath      string   `json:"stats_path,omitempty"`
-	Key            string   `json:"key"`
-	AllowedTargets []string `json:"allowed_targets"`
-	mu             sync.Mutex
-	sessions       map[string]*session
-	stats          counters
-	stop           chan struct{}
-	done           chan struct{}
+	Profile      string                `json:"profile,omitempty"`
+	AppendMode   bool                  `json:"append_mode,omitempty"`
+	StatsPath    string                `json:"stats_path,omitempty"`
+	ForwardProxy *forwardproxy.Handler `json:"forward_proxy"`
+	MaxSessions  int                   `json:"max_sessions,omitempty"`
+	// Retain old field names only to reject migrations explicitly, including
+	// empty values. They never authorize a session or limit destinations.
+	LegacyKey     json.RawMessage `json:"key,omitempty"`
+	LegacyTargets json.RawMessage `json:"allowed_targets,omitempty"`
+	mu            sync.Mutex
+	sessions      map[string]*session
+	stats         counters
+	stop          chan struct{}
+	done          chan struct{}
 }
 
 type counters struct {
@@ -86,18 +90,22 @@ func (Transport) CaddyModule() caddy.ModuleInfo {
 }
 
 func (t *Transport) Provision(ctx caddy.Context) error {
+	if t.MaxSessions < 0 {
+		return errors.New("max_sessions must be positive")
+	}
+	if t.MaxSessions == 0 {
+		t.MaxSessions = 128
+	}
 	if t.Profile != "" {
 		if _, ok := profiles[t.Profile]; !ok {
 			return errors.New("unknown application profile")
 		}
 	}
-	if len(t.Key) < 32 || len(t.AllowedTargets) == 0 {
-		return errors.New("transport requires private key and target allowlist")
+	if t.LegacyKey != nil || t.LegacyTargets != nil {
+		return errors.New("key and allowed_targets were removed; move forward_proxy inside naivefox_transport and configure basic_auth once for both transports")
 	}
-	for _, target := range t.AllowedTargets {
-		if _, _, err := net.SplitHostPort(target); err != nil {
-			return errors.New("invalid allowed target")
-		}
+	if err := t.provisionForwardProxy(ctx); err != nil {
+		return err
 	}
 	t.sessions = make(map[string]*session)
 	t.stats = counters{Requests: make(map[string]uint64), Protocols: make(map[string]uint64), CellCapacities: make(map[string]uint64)}
@@ -175,8 +183,31 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 			return s, nil
 		}
 	}
-	if r.URL.Path != "/" || len(t.sessions) >= 128 {
+	if r.URL.Path != "/" {
 		return nil, errors.New("session")
+	}
+	for len(t.sessions) >= t.MaxSessions {
+		// Anonymous page visits must not reserve every slot for the full TTL.
+		// Evict the oldest unauthenticated session, never an authenticated one.
+		var oldestID string
+		var oldest time.Time
+		for id, candidate := range t.sessions {
+			candidate.mu.Lock()
+			if !candidate.authed && (oldestID == "" || candidate.last.Before(oldest)) {
+				oldestID, oldest = id, candidate.last
+			}
+			candidate.mu.Unlock()
+		}
+		if oldestID == "" {
+			return nil, errors.New("authenticated session capacity reached")
+		}
+		candidate := t.sessions[oldestID]
+		candidate.mu.Lock()
+		if !candidate.authed {
+			candidate.peer.Close()
+			delete(t.sessions, oldestID)
+		}
+		candidate.mu.Unlock()
 	}
 	token := make([]byte, 32)
 	if _, err := rand.Read(token); err != nil {
@@ -184,17 +215,26 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	}
 	s := &session{ip: ip, last: time.Now(), appendMode: t.AppendMode, wake: make(chan struct{}, 1)}
 	s.peer, err = mux.NewWithWindow(func(ctx context.Context, target string) (net.Conn, error) {
-		allowed := false
-		for _, value := range t.AllowedTargets {
-			if value == target {
-				allowed = true
-				break
+		host, port, err := net.SplitHostPort(target)
+		if err != nil || host == "" || strings.ContainsAny(host, "\x00\r\n\t /?#@") || port == "" {
+			return nil, errors.New("invalid TCP destination")
+		}
+		for _, digit := range port {
+			if digit < '0' || digit > '9' {
+				return nil, errors.New("invalid TCP destination port")
 			}
 		}
-		if !allowed {
-			return nil, errors.New("target denied")
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return nil, errors.New("invalid TCP destination port")
 		}
-		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", target)
+		s.mu.Lock()
+		authed := s.authed
+		s.mu.Unlock()
+		if !authed {
+			return nil, errors.New("unauthenticated stream")
+		}
+		return t.ForwardProxy.DialContext(ctx, "tcp", target)
 	}, t.appProfile().ReceiveWindow)
 	if err != nil {
 		return nil, err
@@ -214,7 +254,7 @@ func (t *Transport) reject(w http.ResponseWriter) {
 
 func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if strings.HasPrefix(r.URL.Path, "/__lab/") {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+t.Key)) != 1 {
+		if !t.authenticate([]byte(r.Header.Get("Authorization"))) {
 			w.WriteHeader(404)
 			return nil
 		}
@@ -239,7 +279,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.mu.Lock()
 		t.stats.Connect++
 		t.mu.Unlock()
-		return next.ServeHTTP(w, r)
+		return t.ForwardProxy.ServeHTTP(w, r, next)
 	}
 	path := r.URL.Path
 	_, asset := assetDefinition(path)
@@ -248,7 +288,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	continuousPath := path == "/api/events/idle" || (path == "/api/data/interactive" && !t.appProfile().InteractiveDuplex) || path == "/api/data/download" || path == "/api/data/upload" || path == "/api/data/mixed"
 	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk" || (t.appProfile().Continuous && continuousPath)
 	if !asset && !carrier && !exchange && !bulk {
-		return next.ServeHTTP(w, r)
+		return t.ForwardProxy.ServeHTTP(w, r, next)
 	}
 	methodLabel, pathLabel, protocolLabel := r.Method, path, r.Proto
 	if methodLabel != "GET" && methodLabel != "POST" {
@@ -284,6 +324,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			// The native client must reject a different profile before sending
 			// authentication or opening streams: receive windows are not negotiated.
 			w.Header().Set("X-App-Profile", t.profileName())
+			w.Header().Set("X-App-Auth", "basic")
 		}
 		body, mime, err := assetBody(path, t.appProfile())
 		if err != nil {
@@ -368,7 +409,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		useful, opens := uint64(0), uint64(0)
 		if len(frames) > 0 && frames[0].Kind == cell.Auth {
 			f := frames[0]
-			if s.authed || f.Stream != 0 || f.Sequence != 0 || subtle.ConstantTimeCompare(f.Body, []byte(t.Key)) != 1 {
+			if s.authed || f.Stream != 0 || f.Sequence != 0 || !t.authenticate(f.Body) {
 				s.mu.Unlock()
 				t.reject(w)
 				return nil

@@ -1,22 +1,20 @@
 package transport
 
 import (
-	"bytes"
 	"context"
 	"net"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/incident201/naivefox-transport/internal/cell"
 	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
 func TestIdleHeartbeatAndEventKeepCellSequence(t *testing.T) {
 	for _, profile := range []string{"continuous-bulk-duplex", "continuous-bulk-idle-events"} {
-		module := &Transport{Profile: profile, Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-		if err := module.Provision(caddy.Context{}); err != nil {
+		module := &Transport{Profile: profile, ForwardProxy: testForwardProxy()}
+		if err := module.Provision(testCaddyContext(t)); err != nil {
 			t.Fatal(err)
 		}
 		peer := mux.New(nil)

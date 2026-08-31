@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
@@ -37,8 +36,8 @@ func (b *gatedUpload) Close() error {
 func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 	for _, operation := range []string{"expire", "cleanup", "cancel"} {
 		t.Run(operation, func(t *testing.T) {
-			module := &Transport{Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-			if err := module.Provision(caddy.Context{}); err != nil {
+			module := &Transport{ForwardProxy: testForwardProxy()}
+			if err := module.Provision(testCaddyContext(t)); err != nil {
 				t.Fatal(err)
 			}
 			cleaned := false
@@ -52,12 +51,12 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 				return nil
 			})
 			root := httptest.NewRecorder()
-			if err := module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next); err != nil {
+			if err := module.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next); err != nil {
 				t.Fatal(err)
 			}
 			cookie := root.Result().Cookies()[0]
 			s := module.sessions[cookie.Value]
-			encoded, err := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(module.Key)}})
+			encoded, err := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -65,7 +64,7 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 			defer body.Close()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			request := httptest.NewRequest("POST", "https://localhost/api/sync", nil).WithContext(ctx)
+			request := testRequest("POST", "https://localhost/api/sync", nil).WithContext(ctx)
 			request.AddCookie(cookie)
 			request.Body = body
 			upload := httptest.NewRecorder()
@@ -100,7 +99,7 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 				otherDone := make(chan error, 1)
 				other := httptest.NewRecorder()
 				go func() {
-					otherDone <- module.ServeHTTP(other, httptest.NewRequest("GET", "https://localhost/", nil), next)
+					otherDone <- module.ServeHTTP(other, testRequest("GET", "https://localhost/", nil), next)
 				}()
 				select {
 				case err := <-otherDone:
@@ -112,7 +111,7 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 				}
 			} else {
 				other := httptest.NewRecorder()
-				if err := module.ServeHTTP(other, httptest.NewRequest("GET", "https://localhost/", nil), next); err != nil || other.Code != 400 || len(module.sessions) != 0 {
+				if err := module.ServeHTTP(other, testRequest("GET", "https://localhost/", nil), next); err != nil || other.Code != 400 || len(module.sessions) != 0 {
 					t.Fatal("cleanup allowed a new session after the expiry loop stopped")
 				}
 			}
@@ -132,7 +131,7 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 				t.Fatal("failed upload changed authentication or sequence")
 			}
 			if operation == "cancel" {
-				retry := httptest.NewRequest("POST", "https://localhost/api/sync", bytes.NewReader(encoded))
+				retry := testRequest("POST", "https://localhost/api/sync", bytes.NewReader(encoded))
 				retry.AddCookie(cookie)
 				w := httptest.NewRecorder()
 				if err := module.ServeHTTP(w, retry, next); err != nil || w.Code != 204 {
@@ -144,18 +143,18 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 }
 
 func TestConcurrentUploadsCommitOneSequence(t *testing.T) {
-	module := &Transport{Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-	if err := module.Provision(caddy.Context{}); err != nil {
+	module := &Transport{ForwardProxy: testForwardProxy()}
+	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
 	next := caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error { return nil })
 	root := httptest.NewRecorder()
-	if err := module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next); err != nil {
+	if err := module.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next); err != nil {
 		t.Fatal(err)
 	}
 	cookie := root.Result().Cookies()[0]
-	body, err := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(module.Key)}})
+	body, err := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +162,7 @@ func TestConcurrentUploadsCommitOneSequence(t *testing.T) {
 	results := make(chan int, 2)
 	for range 2 {
 		go func() {
-			r := httptest.NewRequest("POST", "https://localhost/api/sync", bytes.NewReader(body))
+			r := testRequest("POST", "https://localhost/api/sync", bytes.NewReader(body))
 			r.AddCookie(cookie)
 			w := httptest.NewRecorder()
 			<-ready

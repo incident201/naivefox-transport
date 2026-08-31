@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/incident201/naivefox-transport/internal/cell"
 	"github.com/incident201/naivefox-transport/internal/mux"
@@ -57,17 +56,17 @@ func TestProgressHandoffCannotRenewAnEmptyProbe(t *testing.T) {
 }
 
 func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
-	module := &Transport{Profile: "continuous-bulk", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-	if err := module.Provision(caddy.Context{}); err != nil {
+	module := &Transport{Profile: "continuous-bulk", ForwardProxy: testForwardProxy()}
+	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
 	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { w.WriteHeader(404); return nil })
 	root := httptest.NewRecorder()
-	module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+	module.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
 	cookie := root.Result().Cookies()[0]
 	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+		r := testRequest(method, "https://localhost"+path, bytes.NewReader(body))
 		r.AddCookie(cookie)
 		w := httptest.NewRecorder()
 		if err := module.ServeHTTP(w, r, next); err != nil {
@@ -75,7 +74,7 @@ func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
 		}
 		return w
 	}
-	body, _ := cell.Encode(0, 16384, []cell.Frame{{Kind: cell.Auth, Body: []byte(module.Key)}})
+	body, _ := cell.Encode(0, 16384, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}})
 	if request("POST", "/api/sync/bulk", body[:len(body)-1]).Code != 400 {
 		t.Fatal("short body")
 	}
@@ -103,17 +102,17 @@ func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
 }
 
 func TestBulkDuplexKeepsOtherStatesUnchanged(t *testing.T) {
-	module := &Transport{Profile: "continuous-bulk-duplex", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-	if err := module.Provision(caddy.Context{}); err != nil {
+	module := &Transport{Profile: "continuous-bulk-duplex", ForwardProxy: testForwardProxy()}
+	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
 	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { w.WriteHeader(404); return nil })
 	root := httptest.NewRecorder()
-	module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+	module.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
 	cookie := root.Result().Cookies()[0]
 	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+		r := testRequest(method, "https://localhost"+path, bytes.NewReader(body))
 		r.AddCookie(cookie)
 		w := httptest.NewRecorder()
 		if err := module.ServeHTTP(w, r, next); err != nil {
@@ -121,7 +120,7 @@ func TestBulkDuplexKeepsOtherStatesUnchanged(t *testing.T) {
 		}
 		return w
 	}
-	body, _ := cell.Encode(0, 16384, []cell.Frame{{Kind: cell.Auth, Body: []byte(module.Key)}})
+	body, _ := cell.Encode(0, 16384, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}})
 	if request("POST", "/api/sync/bulk", body[:len(body)-1]).Code != 400 || request("GET", "/api/sync/bulk", nil).Code != 400 {
 		t.Fatal("invalid upload")
 	}

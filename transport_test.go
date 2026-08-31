@@ -10,27 +10,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/incident201/naivefox-transport/internal/cell"
 	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
 func TestApplicationCapacityAuthAndReplay(t *testing.T) {
-	module := &Transport{Profile: "v1", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-	if err := module.Provision(caddy.Context{}); err != nil {
+	module := &Transport{Profile: "v1", ForwardProxy: testForwardProxy()}
+	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
 	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { w.WriteHeader(404); return nil })
 	root := httptest.NewRecorder()
-	module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+	module.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
 	if root.Code != 200 || root.Body.Len() != 4096 {
 		t.Fatal("root")
 	}
 	cookie := root.Result().Cookies()[0]
 	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+		r := testRequest(method, "https://localhost"+path, bytes.NewReader(body))
 		r.AddCookie(cookie)
 		w := httptest.NewRecorder()
 		if err := module.ServeHTTP(w, r, next); err != nil {
@@ -48,9 +47,9 @@ func TestApplicationCapacityAuthAndReplay(t *testing.T) {
 	}
 	wrong, _ := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: bytes.Repeat([]byte{'b'}, 32)}})
 	if request("POST", "/api/sync", wrong).Code != 400 {
-		t.Fatal("wrong key")
+		t.Fatal("wrong credentials")
 	}
-	valid, _ := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(module.Key)}})
+	valid, _ := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}})
 	if request("POST", "/api/sync", valid).Code != 204 {
 		t.Fatal("auth")
 	}
@@ -80,15 +79,6 @@ func TestApplicationCapacityAuthAndReplay(t *testing.T) {
 	}
 }
 
-func TestModuleRequiresAllowlist(t *testing.T) {
-	for _, m := range []Transport{{}, {Key: string(bytes.Repeat([]byte{'a'}, 32))}, {Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"invalid"}}} {
-		if err := m.Provision(caddy.Context{}); err == nil {
-			m.Cleanup()
-			t.Fatal("unsafe configuration")
-		}
-	}
-}
-
 func TestFixedProfiles(t *testing.T) {
 	budgets := map[string]int{"v1": 1671168, "duplex-v1": 1671168, "compact": 884736, "compact-sync": 884736, "compact-sync20": 1146880, "compact-fast20": 1146880, "staged": 770048, "staged-fast": 770048, "staged-fast20": 901120, "staged-stream20": 901120, "staged-commit20": 905216, "continuous-v1": 901120, "continuous-sync": 901120, "continuous-sync2": 901120}
 	budgets["continuous-bulk"] = 901120
@@ -112,17 +102,17 @@ func TestFixedProfiles(t *testing.T) {
 	}
 	for name, profile := range profiles {
 		t.Run(name, func(t *testing.T) {
-			module := &Transport{Profile: name, Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-			if err := module.Provision(caddy.Context{}); err != nil {
+			module := &Transport{Profile: name, ForwardProxy: testForwardProxy()}
+			if err := module.Provision(testCaddyContext(t)); err != nil {
 				t.Fatal(err)
 			}
 			defer module.Cleanup()
 			next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { t.Error("unexpected fallback"); return nil })
 			root := httptest.NewRecorder()
-			module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+			module.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
 			cookie := root.Result().Cookies()[0]
 			request := func(method, path string, body []byte) *httptest.ResponseRecorder {
-				r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+				r := testRequest(method, "https://localhost"+path, bytes.NewReader(body))
 				r.AddCookie(cookie)
 				w := httptest.NewRecorder()
 				if err := module.ServeHTTP(w, r, next); err != nil {
@@ -188,8 +178,8 @@ func TestFixedProfiles(t *testing.T) {
 }
 
 func TestUnknownProfileRejected(t *testing.T) {
-	module := &Transport{Profile: "typo", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-	if err := module.Provision(caddy.Context{}); err == nil {
+	module := &Transport{Profile: "typo", ForwardProxy: testForwardProxy()}
+	if err := module.Provision(testCaddyContext(t)); err == nil {
 		module.Cleanup()
 		t.Fatal("unknown profile accepted")
 	}

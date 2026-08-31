@@ -7,10 +7,47 @@ There is no outer HTTP CONNECT or WebSocket. TLS and HTTP/2 or HTTP/3 remain the
 responsibility of Caddy and the client network stack.
 
 NaiveFox's default **classic** transport uses the Naive forwardproxy module.
-One Caddy binary can contain both modules: `naivefox_transport` handles its
-application routes and delegates CONNECT and unrelated paths to the next
-handler. Each transport has separate credentials. The transport key and target
-allowlist never authorize classic forwardproxy access.
+One Caddy binary contains both modules. `naivefox_transport` serves its
+application routes and delegates classic requests to one nested `forward_proxy`
+handler. **Both transports use the same username/password and destination
+policy, configured once. There is no separate key or mandatory target list.**
+
+The client keeps its existing proxy URL and changes only `transport`:
+
+```json
+{
+  "listen": "socks://127.0.0.1:1080",
+  "proxy": "https://USER:PASSWORD@proxy.example.com:443",
+  "transport": "no-connect"
+}
+```
+
+`classic` remains the default. `--transport no-connect` or `--transport classic`
+overrides JSON. Percent-encode reserved characters in URL credentials. Use
+`quic://` for H3 (UDP 443 must be reachable), or `https://` for H2.
+
+## Ready Caddy for Linux x86_64
+
+The [releases](https://github.com/incident201/naivefox-transport/releases) contain
+`caddy-linux-amd64`, its checksum and `build-info.json` with exact revisions.
+The workflow runs the Go, JavaScript and actual-binary tests before publishing.
+
+```sh
+mkdir -p "$HOME/caddy-naivefox-download"
+cd "$HOME/caddy-naivefox-download"
+curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/caddy-linux-amd64
+curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/caddy-linux-amd64.sha256
+sha256sum -c caddy-linux-amd64.sha256
+chmod +x caddy-linux-amd64
+./caddy-linux-amd64 list-modules | grep -E 'forward_proxy|naivefox_transport'
+```
+
+The binary includes standard Caddy modules and both proxy modules. If your
+current Caddy has other plugins (such as a DNS certificate plugin), add them
+to the custom xcaddy build below. They are **not included automatically**.
+Caddy plugins are compiled into its executable; they are not separate `.so`
+files. You can replace the executable without reinstalling the service or
+deleting its configuration/certificate storage.
 
 This code began as an application-carrier experiment. Its history, optional
 browser/loopback bridge, gallery assets, and experimental profiles remain here
@@ -22,8 +59,8 @@ Those results do not establish the camouflage quality of a native client.
 
 ## Build and test
 
-The retained versions are Go 1.25.12, Caddy 2.11.2, and the Naive forwardproxy
-revision `d62c80d3dd2c`. Put Go and xcaddy on PATH, then run:
+The retained versions are Go 1.25.12 and Caddy 2.11.2. Put Go and xcaddy 0.4.6
+on PATH, then run:
 
 ```sh
 bash tools/go.sh go test -race ./...
@@ -54,36 +91,74 @@ For xcaddy builds elsewhere, use the published module path:
 
 ```sh
 xcaddy build v2.11.2 \
-  --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@v0.0.0-20250118002110-d62c80d3dd2c \
+  --with github.com/caddyserver/forwardproxy=github.com/incident201/forwardproxy@7f5bad724696e153716b1c9222176ba0ba05d543 \
   --with github.com/incident201/naivefox-transport
 ```
 
-Pin the module to a reviewed commit in deployment automation. The module's own
-Go dependencies follow the selected Caddy version; they do not enter the lean
-C++ client build graph.
+Install xcaddy with `go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6`.
+Pin this module to a reviewed release revision in deployment automation. Append
+one `--with module@version` for each additional plugin in your current Caddy.
+The small [forwardproxy fork](https://github.com/incident201/forwardproxy) starts
+at klzgrad `d62c80d3dd2c` and exposes authentication and cancellable policy dialing
+from the actual handler. The original unmodified module lacks these APIs.
+There is no second HTTP/TLS stack. These Go dependencies are server-only and
+never enter the lean C++ client build graph.
 
 ## Serve classic and no-connect together
 
-Use [examples/Caddyfile](examples/Caddyfile) with the combined binary. Set the
-five environment variables shown there: server hostname, no-connect key, exact
-target allowlist, classic username, and classic password. Generate a separate
-random no-connect key, for example with `openssl rand -hex 32`; protect the
-environment file and do not commit it. Then validate and start the configuration:
+Use [examples/Caddyfile](examples/Caddyfile) with the combined binary. Set only
+server hostname, proxy username and proxy password. Protect the environment
+file and do not commit credentials. The equivalent literal configuration is:
+
+```caddyfile
+proxy.example.com {
+    route {
+        naivefox_transport {
+            forward_proxy {
+                basic_auth USER PASSWORD
+                hide_ip
+                hide_via
+                probe_resistance
+            }
+        }
+        respond 404
+    }
+}
+```
+
+If you already have `forward_proxy`, move its **entire existing block** inside
+`naivefox_transport`, preserving all its options. Do not leave a duplicate
+standalone handler. Repeat `basic_auth` for multiple accounts if needed; all
+accounts work in both modes. Then validate with the **new** binary:
 
 ```sh
 ./artifacts/bin/caddy validate --adapter caddyfile --config examples/Caddyfile
 ./artifacts/bin/caddy run --adapter caddyfile --config examples/Caddyfile
 ```
 
-The explicit `route` order matters. The first handler serves `/` and its
-application routes, while classic CONNECT passes through to `forward_proxy`.
-The last handler returns 404 for other paths. The root HTML also remains
-available to the classic client's H3 startup request. Forwardproxy's own ACL
-and credentials still apply to classic. Do not put a compression handler around
-the no-connect carrier routes.
+Both transports use the nested handler's credentials, `acl`, `ports`, `upstream`
+and `dial_timeout`. Public hostnames and ports do not need individual entries.
+Forwardproxy's ordinary default protection against private/LAN destinations
+still applies; use its normal ACL to intentionally allow such destinations.
+No no-connect-only target allowlist exists.
 
-The native client requires `X-App-Profile: continuous-bulk-pipeline` on the
-initial `GET /` response before it sends AUTH. This header is emitted only for
+The module serves `/` and its application/assets routes. An existing root page
+on that site is replaced. Classic H3 startup remains supported. Other requests
+pass through forwardproxy to the next handler. Do not put a compression handler
+around carrier routes.
+
+For an existing Ubuntu/Debian `caddy.service`, save the old binary and Caddyfile,
+install this binary separately at `/usr/local/bin/caddy-naivefox`, and validate
+using the service environment. Point the service's `ExecStart` and `ExecReload`
+to that new path (preserving other arguments) with a systemd override, then run
+`systemctl daemon-reload` and `systemctl restart caddy`. Restart briefly closes
+active connections. Keep `/var/lib/caddy` and certificate storage unchanged.
+Rollback restores the old Caddyfile and executable path. Docker deployments
+replace their container image instead. Never restart after failed validation.
+
+The native client requires `X-App-Profile: continuous-bulk-pipeline` and
+`X-App-Auth: basic` on the initial `GET /` response before it sends AUTH.
+These headers are emitted only for
 the root handshake, reports the resolved profile even when configuration omits
 it, and prevents accidental use of a different credit window. Older experimental
 server binaries without the header must be upgraded for native no-connect.
@@ -91,25 +166,39 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 
 ## Configuration and limits
 
-The JSON handler name is `naivefox_transport`. Set `key` to a private string of
-at least 32 bytes and `allowed_targets` to an exact list of `host:port` strings.
-Use only HTTPS with certificate validation at the client. Keep the key, private
-Caddy configurations, logs, TLS keys and captures outside Git. Do not enable
-response compression on carrier routes.
+The JSON handler name is `naivefox_transport`; its `forward_proxy` object holds
+the ordinary forwardproxy options without a second `handler` field. Credentials
+must be configured; a missing list or an entirely empty username/password pair
+fails validation. One empty component is accepted for classic compatibility,
+but use a strong password. Use HTTPS with certificate validation. Keep private
+configs, logs, TLS keys and captures outside Git.
+
+For migration, upgrade both server and client. Remove server `key` and
+`allowed_targets`, nest `forward_proxy` as above, and remove client
+`no-connect-key`. Keep the proxy URL. Obsolete server settings fail explicitly,
+even when empty; they are never ignored. Old key-based servers lack the new
+Basic handshake and cannot accidentally receive a new client's credentials.
 
 The omitted `profile` resolves to `continuous-bulk-pipeline`, with 512 KiB of
 receive credit per stream. An explicit profile must match the client. The
 experimental `append_mode` and other profiles are for historical tests, not
 native no-connect configuration. `stats_path` optionally writes counters on
 cleanup; the authenticated `/__lab/stats` and `/__lab/sessions` diagnostic
-routes are retained for fixtures.
+routes are retained for fixtures. They require HTTP `Authorization: Basic ...`
+with the same proxy credentials. Reload Caddy to rotate credentials; old module
+instances close their sessions and new sessions use the new list.
 
 The server binds random, Secure/HttpOnly session cookies to the client IP.
-Only authenticated cells can open targets. Limits include 128 sessions,
-32 simultaneous streams per session, bounded frame queues, a five-second dial
-timeout, and two-minute session expiry without requests. A session has one
-ordered cell sequence per direction; there is no reconnect or resume. Each
-stream's byte sequence is 32-bit and fails closed beyond its range.
+Only authenticated cells can open targets. `max_sessions` defaults to 128 and
+can be increased for available memory/file descriptors. At capacity, the oldest
+unauthenticated visitor is replaced; authenticated sessions are never evicted.
+If all slots are authenticated, new sessions are rejected until capacity is free.
+There are 32 streams per session; clients can use additional sessions for more
+concurrent streams. Queues and credit remain bounded. Sessions expire after
+two minutes without requests; active transfers and 30-second idle polls refresh
+that timer. There is no fixed lifetime limit on active sessions. Byte offsets
+wrap modulo 2^32, so a stream is not limited to 4 GiB. Cell sequences and stream
+IDs do not wrap/reuse within a session. There is no reconnect or resume.
 
 The supported native contract is `continuous-bulk-pipeline` with `append_mode`
 disabled. Historical profile variants and the optional browser/bridge worker
@@ -117,11 +206,10 @@ remain research tools, outside that native contract. Tests cover byte-window
 backpressure, small-frame coalescing, bounded scheduler and metric storage,
 stalled-upload isolation, cancellation, half-close and dual-transport routing.
 
-Deployment still requires operator-managed TLS, private credentials, an exact
-target allowlist, and appropriate exposure and resource limits. Key rotation
-is not automated. The tests do not establish resistance to every denial-of-service
+Deployment requires operator-managed TLS, private credentials and appropriate
+network/resource limits. The tests do not establish resistance to every denial-of-service
 attack, performance parity, or traffic indistinguishability from web browsing.
-Do not expose an unrestricted dialer to solve configuration errors.
+Missing credentials never enable anonymous proxy access.
 
 ## Maintenance
 

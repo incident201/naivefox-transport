@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -24,7 +25,8 @@ import (
 )
 
 type config struct {
-	Key           string `json:"key"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
 	Token         string `json:"token"`
 	Origin        string `json:"origin"`
 	Certificate   string `json:"certificate"`
@@ -64,7 +66,8 @@ func run(path string) error {
 	if err != nil {
 		return err
 	}
-	if len(cfg.Key) < 32 || len(cfg.Token) < 32 || cfg.Origin == "" {
+	authorization := "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.Username+":"+cfg.Password))
+	if (cfg.Username == "" && cfg.Password == "") || strings.Contains(cfg.Username, ":") || len(authorization) > 4064 || len(cfg.Token) < 32 || cfg.Origin == "" {
 		return errors.New("configuration")
 	}
 	peer, err := mux.NewWithWindow(nil, cfg.ReceiveWindow)
@@ -163,7 +166,7 @@ func run(path string) error {
 				frames := []cell.Frame{}
 				budget := capacity - cell.Header
 				if !authSent {
-					f := cell.Frame{Kind: cell.Auth, Body: []byte(cfg.Key)}
+					f := cell.Frame{Kind: cell.Auth, Body: []byte(authorization)}
 					frames = append(frames, f)
 					budget -= f.Size()
 					authSent = true

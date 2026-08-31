@@ -7,23 +7,22 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
 func TestActiveExchangeCapacityAndOrdering(t *testing.T) {
-	module := &Transport{Profile: "continuous-sync", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-	if err := module.Provision(caddy.Context{}); err != nil {
+	module := &Transport{Profile: "continuous-sync", ForwardProxy: testForwardProxy()}
+	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
 	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { w.WriteHeader(404); return nil })
 	root := httptest.NewRecorder()
-	module.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+	module.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
 	cookie := root.Result().Cookies()[0]
 	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+		r := testRequest(method, "https://localhost"+path, bytes.NewReader(body))
 		r.AddCookie(cookie)
 		w := httptest.NewRecorder()
 		if err := module.ServeHTTP(w, r, next); err != nil {

@@ -6,23 +6,22 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
 func TestInteractiveOnlyRouteBudgetReplayAndIsolation(t *testing.T) {
-	m := &Transport{Profile: "continuous-bulk-pipeline-interactive", Key: string(bytes.Repeat([]byte{'a'}, 32)), AllowedTargets: []string{"localhost:9"}}
-	if err := m.Provision(caddy.Context{}); err != nil {
+	m := &Transport{Profile: "continuous-bulk-pipeline-interactive", ForwardProxy: testForwardProxy()}
+	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer m.Cleanup()
 	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error { w.WriteHeader(404); return nil })
 	root := httptest.NewRecorder()
-	m.ServeHTTP(root, httptest.NewRequest("GET", "https://localhost/", nil), next)
+	m.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
 	cookie := root.Result().Cookies()[0]
 	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "https://localhost"+path, bytes.NewReader(body))
+		r := testRequest(method, "https://localhost"+path, bytes.NewReader(body))
 		r.AddCookie(cookie)
 		w := httptest.NewRecorder()
 		if err := m.ServeHTTP(w, r, next); err != nil {
@@ -30,7 +29,7 @@ func TestInteractiveOnlyRouteBudgetReplayAndIsolation(t *testing.T) {
 		}
 		return w
 	}
-	body, _ := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(m.Key)}})
+	body, _ := cell.Encode(0, 4096, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}})
 	reply := request("POST", "/api/exchange/interactive", body)
 	seq, _, _, err := cell.Decode(reply.Body.Bytes())
 	if err != nil || reply.Code != 200 || reply.Body.Len() != 8192 || seq != 0 {

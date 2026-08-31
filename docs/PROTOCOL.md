@@ -12,8 +12,8 @@ or silently substituted. `append_mode` must be false for the native client.
    browser JavaScript runtime, or private loopback bridge is needed by the
    native implementation.
 2. `GET /` returns 200, 4096 bytes of ASCII HTML, and
-   `X-App-Profile: continuous-bulk-pipeline`. The native client rejects a missing
-   or different profile before AUTH. The server sets a random 32-byte token,
+   `X-App-Profile: continuous-bulk-pipeline` and `X-App-Auth: basic`. The native
+   client rejects missing or different values before AUTH. The server sets a random 32-byte token,
    hex-encoded as the `app_session` cookie, with Path=/, Secure, HttpOnly and
    SameSite=Strict. Retain that cookie on all carrier requests. The server binds
    it to the peer IP, not a connection's source port. Redirecting to another
@@ -23,15 +23,16 @@ or silently substituted. `append_mode` must be false for the native client.
    `/assets/image-{1,2,3,4}.svg` (8192 bytes each). With the root, cold bootstrap
    is 73728 response-body bytes. Assets are cacheable; root and carriers are not.
 4. The first client upload contains AUTH as its first frame. Stream and frame
-   sequence are zero; its payload is the exact configured key bytes (no hex
-   decoding). The key is at least 32 bytes; native configuration uses 32..1024
-   printable ASCII bytes. A 64-character string from `openssl rand -hex 32`
-   is suitable. Additional frames may follow AUTH in that cell.
+   sequence are zero; its payload is ASCII `Basic ` followed by standard padded
+   Base64 of the URL-decoded proxy username, a colon, and proxy password. These
+   are the same credentials as classic; no separate key exists. The complete
+   AUTH body must fit the first cell (4064 bytes available after headers).
+   Additional frames may follow AUTH when capacity permits.
 
 AUTH is accepted once per session and compared in constant time. Empty
 unauthenticated cells are permitted for ordinary visitors; they cannot open
 streams. Authentication is not a separate HMAC or encryption scheme: TLS
-protects the complete body, including the key and payload. Filler comes from
+protects the complete body, including credentials and payload. Filler comes from
 `crypto/rand`; there is no custom AEAD, payload obfuscation, or key negotiation.
 
 ## Cells and frames
@@ -71,21 +72,23 @@ length. Frames must exactly occupy the used prefix; filler contains no frames.
 | 3 | FIN | Empty; sequence is the final byte offset |
 | 4 | RESET | Empty; sequence zero |
 | 5 | CREDIT | Four-byte positive byte grant; sequence zero |
-| 6 | AUTH | Key bytes; stream zero and sequence zero |
+| 6 | AUTH | Basic authorization value; stream zero and sequence zero |
 | 7 | OPENED | Empty; sequence zero; server confirms a successful dial |
 
 Stream IDs are nonzero, monotonically increasing and never reused in a session.
-OPEN must exactly match an `allowed_targets` entry. DNS names and IP literals
-are not aliases in that comparison. The dial timeout is five seconds. Failed
-or denied dials produce RESET. A native client must wait for OPENED before
+OPEN accepts any valid TCP `host:port`; no per-destination allowlist is required.
+The shared forwardproxy handler enforces its normal ACL, ports, upstream and
+dial timeout for both transports. Forwardproxy defaults to 30 seconds; set
+`dial_timeout` to change it. Failed or denied dials produce RESET. A native client must wait for OPENED before
 reporting local proxy success; the historical Go bridge was optimistic.
 
 Both peers start each stream with 524288 bytes of send credit and receive
 budget. DATA decrements those counters. CREDIT replenishes send credit only
 after bytes were written to the receiving local socket, and cannot exceed the
 initial window. FIN is a half-close: remaining data in the opposite direction
-continues. RESET aborts the stream. Stream byte offsets cannot exceed uint32;
-the stream fails closed instead of wrapping. Retired-stream frames may be
+continues. RESET aborts the stream. Stream byte offsets wrap modulo 2^32;
+exact expected offset equality and bounded credit still apply. A stream is not
+limited to 4 GiB. Retired-stream frames may be
 ignored, but IDs may not be reused to open a new stream.
 
 At most 32 streams are active per session. The server has 16 queued outbound
@@ -97,8 +100,11 @@ data chunks including the in-flight writer chunk; payload bytes across the
 queue and writer never exceed 512 KiB. Credit alone is
 not a total memory bound; prefetched/in-flight cells and frame allocations are
 additional. Slow readers stop credit replenishment instead of growing a queue
-without a bound. The server permits at most 128 sessions and expires sessions
-after two minutes without an HTTP request.
+without a bound. The server defaults to 128 sessions (`max_sessions` is
+configurable). At capacity, new visitors replace the oldest unauthenticated
+session; authenticated sessions are never evicted. Sessions expire after two
+minutes without an HTTP request. Active requests and idle polls refresh this
+timer, so active sessions have no fixed lifetime limit.
 
 The round-robin scheduler retains only active stream IDs. RESET and completed
 half-closes retire entries immediately; repeated short connections cannot grow
