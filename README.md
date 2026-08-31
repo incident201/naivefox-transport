@@ -183,9 +183,13 @@ The omitted `profile` resolves to `continuous-bulk-pipeline`, with 512 KiB of
 receive credit per stream. An explicit profile must match the client. The
 experimental `append_mode` and other profiles are for historical tests, not
 native no-connect configuration. `stats_path` optionally writes counters on
-cleanup; the authenticated `/__lab/stats` and `/__lab/sessions` diagnostic
-routes are retained for fixtures. They require HTTP `Authorization: Basic ...`
-with the same proxy credentials. Reload Caddy to rotate credentials; old module
+cleanup. All `/__lab/*` HTTP routes return 404 by default. The optional
+`diagnostics` flag enables only authenticated `GET /__lab/stats` for private
+fixtures; do not enable it on public multi-user deployments. It uses HTTP
+`Authorization: Basic ...` with the same proxy credentials and exposes aggregate
+counters, never credentials or target addresses. The session-deletion HTTP API
+was removed entirely: proxy users are not administrators. Use Caddy's protected
+admin/config lifecycle to close sessions. Reload Caddy to rotate credentials; old module
 instances close their sessions and new sessions use the new list.
 
 The server binds random, Secure/HttpOnly session cookies to the client IP.

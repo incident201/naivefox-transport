@@ -36,6 +36,7 @@ type Transport struct {
 	StatsPath    string                `json:"stats_path,omitempty"`
 	ForwardProxy *forwardproxy.Handler `json:"forward_proxy"`
 	MaxSessions  int                   `json:"max_sessions,omitempty"`
+	Diagnostics  bool                  `json:"diagnostics,omitempty"`
 	// Retain old field names only to reject migrations explicitly, including
 	// empty values. They never authorize a session or limit destinations.
 	LegacyKey     json.RawMessage `json:"key,omitempty"`
@@ -254,26 +255,15 @@ func (t *Transport) reject(w http.ResponseWriter) {
 
 func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if strings.HasPrefix(r.URL.Path, "/__lab/") {
-		if !t.authenticate([]byte(r.Header.Get("Authorization"))) {
+		if !t.Diagnostics || r.URL.Path != "/__lab/stats" || r.Method != http.MethodGet || !t.authenticate([]byte(r.Header.Get("Authorization"))) {
 			w.WriteHeader(404)
 			return nil
 		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
-		if r.URL.Path == "/__lab/stats" && r.Method == "GET" {
-			w.Header().Set("Content-Type", "application/json")
-			return json.NewEncoder(w).Encode(t.stats)
-		}
-		if r.URL.Path == "/__lab/sessions" && r.Method == "DELETE" {
-			for id, s := range t.sessions {
-				s.peer.Close()
-				delete(t.sessions, id)
-			}
-			w.WriteHeader(204)
-			return nil
-		}
-		w.WriteHeader(404)
-		return nil
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		return json.NewEncoder(w).Encode(t.stats)
 	}
 	if r.Method == "CONNECT" {
 		t.mu.Lock()

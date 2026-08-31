@@ -108,6 +108,21 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	for _, diagnostic := range []struct{ method, path string }{{http.MethodGet, "/__lab/stats"}, {http.MethodDelete, "/__lab/sessions"}} {
+		request, err := http.NewRequest(diagnostic.method, origin+diagnostic.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", testAuthorization)
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("release exposes %s %s: %d", diagnostic.method, diagnostic.path, response.StatusCode)
+		}
+	}
 	classic, err := tls.Dial("tcp", address, &tls.Config{RootCAs: roots, NextProtos: []string{"http/1.1"}})
 	if err != nil {
 		t.Fatal(err)

@@ -32,6 +32,11 @@ func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			}
 			seen[name] = true
 			switch name {
+			case "diagnostics":
+				if d.NextArg() {
+					return d.ArgErr()
+				}
+				t.Diagnostics = true
 			case "max_sessions":
 				var value string
 				if !d.AllArgs(&value) {
