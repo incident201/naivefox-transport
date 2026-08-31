@@ -165,9 +165,11 @@ to one 256-KiB message before cell/mux dispatch. Existing mux input, output,
 32-stream and 512-KiB byte-credit limits remain unchanged.
 
 The server selects 256 KiB with at least 128 KiB of currently sendable bytes,
-64 KiB with other ready data, and 512 bytes for controls or idle. It coalesces
-ready data for 2 ms before selecting capacity; this does not control the
-startup transition. Useful bytes displace fresh cryptographic filler. A 25-second
+64 KiB with other ready data, and 512 bytes for controls or idle. When fewer
+than 256 KiB are sendable, it coalesces nonempty data for 2 ms before selecting
+capacity. At least 256 KiB of ready data bypasses that delay; blocking writes
+still provide backpressure. This does not control the startup transition.
+Useful bytes displace fresh cryptographic filler. A 25-second
 idle timer supplies empty 512-byte cells, without returning to HTTP. Complete
 messages refresh session activity; stalled input has a 75-second deadline and
 stalled writes a 30-second deadline. Session expiry and module cleanup close
