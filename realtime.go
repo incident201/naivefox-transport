@@ -240,7 +240,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			case <-s.wake:
 				continue
 			}
-		} else if pressure.Bytes > 0 {
+		} else if pressure.Bytes > 0 && pressure.Bytes < cell.MaxCell {
 			coalesce := time.NewTimer(2 * time.Millisecond)
 			select {
 			case <-ctx.Done():
