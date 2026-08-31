@@ -51,6 +51,14 @@ type Transport struct {
 }
 
 type counters struct {
+	WSOpened                  uint64            `json:"ws_opened"`
+	WSClosed                  uint64            `json:"ws_closed"`
+	WSMessagesIn              uint64            `json:"ws_messages_in"`
+	WSMessagesOut             uint64            `json:"ws_messages_out"`
+	WSCellCapacities          map[string]uint64 `json:"ws_cell_capacities,omitempty"`
+	WSStartupMinUp            uint32            `json:"ws_startup_min_up"`
+	WSStartupMinDown          uint32            `json:"ws_startup_min_down"`
+	StartupCompleted          uint64            `json:"startup_completed"`
 	IdleHeartbeats            uint64            `json:"idle_heartbeats"`
 	ProgressHintOpportunities uint64            `json:"progress_hint_opportunities"`
 	ProgressHintPromotions    uint64            `json:"progress_hint_promotions"`
@@ -76,16 +84,35 @@ type counters struct {
 }
 
 type session struct {
-	mu         sync.Mutex
-	ip         string
-	last       time.Time
-	authed     bool
-	appendMode bool
-	up         uint32
-	down       uint32
-	peer       *mux.Peer
-	idle       bool
-	wake       chan struct{}
+	mu             sync.Mutex
+	ip             string
+	last           time.Time
+	authed         bool
+	appendMode     bool
+	up             uint32
+	down           uint32
+	peer           *mux.Peer
+	idle           bool
+	wake           chan struct{}
+	startupSteps   int
+	startupInvalid bool
+	httpActive     int
+	realtime       bool
+	realtimeConn   io.Closer
+	ackPending     bool
+	ackSequence    uint32
+	wsStartupUp    uint32
+	wsStartupDown  uint32
+}
+
+func (s *session) close() {
+	s.mu.Lock()
+	conn := s.realtimeConn
+	s.mu.Unlock()
+	if conn != nil {
+		conn.Close()
+	}
+	s.peer.Close()
 }
 
 func (Transport) CaddyModule() caddy.ModuleInfo {
@@ -138,7 +165,7 @@ func (t *Transport) expire(now time.Time) {
 		expired := now.Sub(s.last) > 2*time.Minute
 		s.mu.Unlock()
 		if expired {
-			s.peer.Close()
+			s.close()
 			delete(t.sessions, id)
 		}
 	}
@@ -152,8 +179,12 @@ func (t *Transport) Cleanup() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for id, s := range t.sessions {
-		t.stats.Peers = append(t.stats.Peers, s.peer.Snapshot())
-		s.peer.Close()
+		peerStats := s.peer.Snapshot()
+		s.mu.Lock()
+		peerStats.WebSocket, peerStats.StartupUp, peerStats.StartupDown = s.realtime, s.wsStartupUp, s.wsStartupDown
+		s.mu.Unlock()
+		t.stats.Peers = append(t.stats.Peers, peerStats)
+		s.close()
 		delete(t.sessions, id)
 	}
 	if t.StatsPath != "" {
@@ -256,6 +287,9 @@ func (t *Transport) reject(w http.ResponseWriter) {
 }
 
 func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	if r.URL.Path == "/api/realtime" {
+		return t.realtime(w, r)
+	}
 	if strings.HasPrefix(r.URL.Path, "/__lab/") {
 		if !t.Diagnostics || r.URL.Path != "/__lab/stats" || r.Method != http.MethodGet || !t.authenticate([]byte(r.Header.Get("Authorization"))) {
 			w.WriteHeader(404)
@@ -317,6 +351,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			// authentication or opening streams: receive windows are not negotiated.
 			w.Header().Set("X-App-Profile", t.profileName())
 			w.Header().Set("X-App-Auth", "basic")
+			if t.profileName() == defaultProfile && !t.AppendMode {
+				w.Header().Set("X-App-Realtime", "websocket-v1")
+			}
 		}
 		body, mime, err := assetBody(path, t.appProfile())
 		if err != nil {
@@ -332,6 +369,13 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.reject(w)
 		return nil
 	}
+	observer, ok := s.beginHTTP(w, r)
+	if !ok {
+		t.reject(w)
+		return nil
+	}
+	w = observer
+	defer t.finishHTTP(s, observer, r)
 	if path == "/api/events/idle" {
 		if r.Method != "GET" {
 			t.reject(w)

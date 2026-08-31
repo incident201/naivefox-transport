@@ -3,8 +3,10 @@
 This repository maintains the Caddy `http.handlers.naivefox_transport` module
 used by [NaiveFox](https://github.com/incident201/naivefox)'s opt-in **no-connect**
 transport. Ordinary HTTPS GET/POST requests carry bounded, multiplexed TCP data.
-There is no outer HTTP CONNECT or WebSocket. TLS and HTTP/2 or HTTP/3 remain the
-responsibility of Caddy and the client network stack.
+The original `no-connect` mode has no outer CONNECT or WebSocket. The explicit
+`no-connect-hybrid` mode completes the same page and API startup, then carries
+NFC1 over one shaped WebSocket. TLS and HTTP remain the responsibility of Caddy
+and the client network stack.
 
 NaiveFox's default **classic** transport uses the Naive forwardproxy module.
 One Caddy binary contains both modules. `naivefox_transport` serves its
@@ -56,6 +58,35 @@ client. The selected profile is `continuous-bulk-pipeline`: other experimental
 profiles are not interchangeable with the native client. Historical bandwidth,
 timing, and browser results are in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 Those results do not establish the camouflage quality of a native client.
+
+## Optional hybrid client
+
+Select `"transport":"no-connect-hybrid"` in a matching native client, or pass
+`--transport no-connect-hybrid`. The same `continuous-bulk-pipeline` server
+profile supports both clients; existing GET/POST behavior is unchanged.
+After assets and all twenty startup API pairs finish, the hybrid opens
+`/api/realtime` with WebSocket subprotocol `nfc1.hybrid.v1`. It preserves the
+session, authenticated mux streams, sequence numbers and 512-KiB stream credit.
+
+The current Firefox WebSocket path uses a new TLS/TCP connection with an HTTP/1.1
+upgrade, including after an H3 startup. Consequently this explicit hybrid is a
+mixed HTTP protocol mode, not an H3-only transport. Caddy must permit `h1` as
+well as the selected startup protocol. There is no automatic fallback to this
+mode from `no-connect`, and WebSocket failure aborts the session without replay.
+
+Binary message capacities are 64 KiB for activity, 256 KiB for bulk, and 512
+bytes for controls or idle heartbeats. Fresh random filler fills unused space.
+One bounded writer coalesces activity for at most 2 ms; idle heartbeats occur
+after 25 seconds. Further local connections reuse the WebSocket until the
+carrier's existing 32-stream limit requires another session.
+
+Ordinary visitors can open the gallery with `#realtime` to follow the same
+startup and idle WebSocket lifecycle without credentials. The fragment is not
+sent in HTTP. Anonymous WebSockets accept only empty cells and cannot open
+targets; proxy authentication must already have succeeded in startup AUTH.
+See [the wire contract](docs/PROTOCOL.md#optional-realtime-transition) for bounds,
+acknowledgements and failure handling. Functional tests do not establish a
+performance or camouflage improvement.
 
 ## Build and test
 

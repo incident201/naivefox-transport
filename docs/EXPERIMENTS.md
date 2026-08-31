@@ -7,6 +7,22 @@ username/password configuration and shared destination policy. See
 
 # Application-capacity transport laboratory
 
+## Hybrid follow-up history preflight
+
+The complete server history and all-ref NaiveFox application-carrier journal
+were reviewed before the hybrid implementation. Earlier `continuous-sync`,
+`continuous-sync2`, selective bulk duplex, bounded window, paired HTTP pipeline,
+prefix delivery, and local ACK variants all retained finite outer HTTP exchanges.
+Their local WebSocket was IPC only. None tested an outer WebSocket admitted
+after the completed twenty-pair startup with the existing NFC1 streams intact.
+The distinct premise is removing repeated active HTTP lifecycles while keeping
+the complete startup graph; it does not repeat finite-slot or timing-barrier
+tuning. Current Firefox uses HTTP/1.1 WSS after H2/H3 startup, so comparisons
+must include that second physical connection and H3-to-TCP transition. The
+hybrid is an opt-in native experiment, and historical browser-worker speed or
+residual results do not qualify it. See the current protocol for its exact
+message capacities, completion barrier and independent flow-control bounds.
+
 Experimental Caddy module and loopback bridge for the NaiveFox application-carrier
 campaign. Not a product and not wire-compatible with NaiveProxy. The native
 NaiveFox defaults are unchanged. The paired Firefox experiment lives on the dedicated

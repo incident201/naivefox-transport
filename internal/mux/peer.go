@@ -17,6 +17,9 @@ type DialFunc func(context.Context, string) (net.Conn, error)
 const streamChunk = 16 * 1024
 
 type Stats struct {
+	WebSocket     bool   `json:"websocket,omitempty"`
+	StartupUp     uint32 `json:"startup_up,omitempty"`
+	StartupDown   uint32 `json:"startup_down,omitempty"`
 	ReceiveWindow uint32 `json:"receive_window"`
 	Opened        uint64 `json:"opened"`
 	Reset         uint64 `json:"reset"`
@@ -311,6 +314,9 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 		return errors.New("closed peer")
 	}
 	for _, f := range frames {
+		if f.Kind == cell.Ack {
+			return errors.New("unexpected carrier acknowledgement")
+		}
 		if f.Stream == 0 {
 			return errors.New("zero stream")
 		}

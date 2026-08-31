@@ -137,6 +137,60 @@ Startup completion enters the continuous lifecycle; it does not close the
 session. The browser experiment's rendering callbacks are not native runtime
 dependencies or a claim of identical browser timing.
 
+## Optional realtime transition
+
+The same profile also advertises `X-App-Realtime: websocket-v1` on the root.
+A `no-connect-hybrid` client finishes the root, assets and all twenty startup
+pairs, then opens a genuine WebSocket at `/api/realtime` with subprotocol
+`nfc1.hybrid.v1`, the existing session cookie and a same-origin HTTPS Origin.
+The current native Firefox implementation opens a new HTTP/1.1 TLS/TCP route;
+H3 remains the startup protocol only. This is an explicit transport policy,
+not fallback from an H3-only no-connect session. No CONNECT tunnel is used.
+
+The server requires forty successfully completed requests in the declared
+alternating startup order, no invalid startup request, and no outstanding
+carrier HTTP request. After claiming the session, a second WebSocket and all
+further carrier HTTP requests are rejected. A failed upgrade is terminal.
+The client must separately verify complete asset responses before the transition;
+the server does not require cacheable assets to be fetched again. HTTP and WS
+share the existing directional cell counters and logical mux without resetting
+sequences, credentials, stream IDs or credit.
+
+Each binary WebSocket message contains exactly one complete NFC1 cell of 512,
+65536 or 262144 bytes. Text, compressed, oversized and malformed messages fail
+the session. Gorilla supplies RFC 6455 framing, masking validation, fragmentation
+and close/control handling; Caddy supplies HTTP and TLS. There is one reader and
+one bounded application writer, no unbounded message queue. Reading is limited
+to one 256-KiB message before cell/mux dispatch. Existing mux input, output,
+32-stream and 512-KiB byte-credit limits remain unchanged.
+
+The server selects 256 KiB with at least 128 KiB of currently sendable bytes,
+64 KiB with other ready data, and 512 bytes for controls or idle. It coalesces
+ready data for 2 ms before selecting capacity; this does not control the
+startup transition. Useful bytes displace fresh cryptographic filler. A 25-second
+idle timer supplies empty 512-byte cells, without returning to HTTP. Complete
+messages refresh session activity; stalled input has a 75-second deadline and
+stalled writes a 30-second deadline. Session expiry and module cleanup close
+the WebSocket and its logical streams.
+
+WS adds frame type 8, ACK: stream zero, empty payload, frame sequence equal to
+the latest completely applied client cell sequence. ACK is cumulative and sent
+only after a client cell containing nonempty application frames. One pending
+ACK scalar replaces older pending values and is carried in the next fixed
+capacity response, including a 512-byte control response. The client rejects
+future or decreasing acknowledgements and waits for the FIN cell's ACK before
+retiring its local stream. Empty heartbeat cells are not acknowledged. Clients
+never send ACK; HTTP and mux application-frame dispatch reject it. ACK means
+cell application, not local socket delivery: CREDIT still follows actual local
+writes, and FIN still preserves the opposite direction.
+
+Authenticated startup permits ordinary OPEN/DATA/CREDIT/FIN/RESET frames over
+WS. AUTH and re-authentication are forbidden after upgrade. Anonymous ordinary
+visitors may complete empty startup and enter an empty realtime lifecycle, but
+any nonempty client frame list closes their WS before opening a target. This
+supports the gallery's `#realtime` visitor path without putting proxy credentials
+in the page. There is no resume, retransmission or HTTP fallback after failure.
+
 ## Continuous lifecycle
 
 At lease boundaries, use ready local bytes/control frames and the latest

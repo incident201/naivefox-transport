@@ -86,6 +86,27 @@ __NFC_LIFECYCLE__
       if(!complete){abort.abort();await remote.catch(()=>{});}
     }
   }
+  async function realtime() {
+    if(socket||rounds!==20||params.get("upload")==="1")throw new Error("realtime profile");
+    const target=new URL("/api/realtime",location.href);target.protocol="wss:";
+    const live=new WebSocket(target,"nfc1.hybrid.v1");live.binaryType="arraybuffer";
+    let heartbeat;
+    try {
+      await new Promise((resolve,reject)=>{live.onopen=resolve;live.onerror=reject;});
+      window.__NFC_PHASE__="realtime";window.__NFC_DONE__=true;status.textContent="Live archive updates.";
+      await new Promise((resolve,reject)=>{
+        live.onclose=()=>reject(new Error("realtime closed"));live.onerror=reject;
+        live.onmessage=event=>{
+          const body=new Uint8Array(event.data),view=new DataView(body.buffer);
+          if(body.length!==512||view.getUint32(0)!==0x4e464331||view.getUint32(4)!==downloadSequence++||view.getUint32(8)!==16||view.getUint32(12)!==0){live.close();return;}
+        };
+        heartbeat=setInterval(()=>{
+          if(live.bufferedAmount!==0){live.close();return;}
+          live.send(emptyCell(512));
+        },25000);
+      });
+    } finally {clearInterval(heartbeat);live.close();}
+  }
   async function run() {
     if (running) return; running=true;window.__NFC_DONE__=false;window.__NFC_ERROR__=null;
     window.__NFC_EARLY_CELLS__=0;window.__NFC_EARLY_FILLER__=0;
@@ -113,8 +134,9 @@ __NFC_LIFECYCLE__
         if((round+1)%profile.paint_every===0||round===rounds-1)await new Promise(resolve=>requestAnimationFrame(resolve));
       }
       if(profile.commit){await receiveSlot(await sendSlot(4096,"/api/action"),4096);window.__NFC_ACTION_DONE__=true;}
-      status.textContent="Archive synchronized.";window.__NFC_DONE__=true;
-      if(profile.continuous)await runLifecycle({
+      status.textContent="Archive synchronized.";window.__NFC_DONE__=!params.has("realtime");
+      if(params.has("realtime"))await realtime();
+      else if(profile.continuous)await runLifecycle({
         alive:()=>!bridgeClosed,
         pressure,
         state:value=>{window.__NFC_PHASE__=value;status.textContent=value==="idle"?"Waiting for updates.":"Synchronizing updates.";},
@@ -146,6 +168,7 @@ __NFC_LIFECYCLE__
         socket.onmessage=event=>{const body=new Uint8Array(event.data);if(body.length===1&&body[0]===4){wake.notify();return;}const next=pending;pending=null;if(next)next.resolve(event.data);};
         socket.onclose=()=>{bridgeClosed=true;wake.notify();if(pending){pending.reject(new Error("ipc closed"));pending=null;}};
       }
+      if(params.has("realtime")&&document.readyState!=="complete")await new Promise(resolve=>window.addEventListener("load",resolve,{once:true}));
       window.__NFC_READY__=true;
       if(params.get("hold")!=="1") await run();
     } catch (_) {window.__NFC_ERROR__="bridge-start";}

@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
@@ -212,6 +213,60 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		t.Fatal("no-connect echo mismatch")
 	}
 	checkClassic("classic remains connected")
+
+	client.Jar, _ = cookiejar.New(nil)
+	response, err := client.Get(origin + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	if response.Header.Get("X-App-Realtime") != "websocket-v1" {
+		t.Fatal("missing realtime advertisement")
+	}
+	for round := 0; round < 20; round++ {
+		var frames []cell.Frame
+		if round == 0 {
+			frames = []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}}
+		}
+		upload(uint32(round), frames)
+		response, err := client.Get(origin + startupPath(round))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		sequence, _, _, decodeErr := cell.Decode(body)
+		if response.ProtoMajor != 2 || response.StatusCode != 200 || readErr != nil || decodeErr != nil || sequence != uint32(round) {
+			t.Fatal("hybrid H2 bootstrap")
+		}
+	}
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: roots}, Jar: client.Jar, Subprotocols: []string{realtimeProtocol}}
+	ws, response, err := dialer.Dial("wss://"+address+"/api/realtime", http.Header{"Origin": []string{origin}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if response.StatusCode != 101 || ws.Subprotocol() != realtimeProtocol {
+		t.Fatal("real WebSocket handshake")
+	}
+	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	body, err := cell.Encode(20, 512, []cell.Frame{{Kind: cell.Open, Stream: 1, Body: []byte(target.Addr().String())}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.WriteMessage(websocket.BinaryMessage, body); err != nil {
+		t.Fatal(err)
+	}
+	_, body, err = ws.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence, frames, _, err := cell.Decode(body)
+	if err != nil || sequence != 20 || len(frames) == 0 || frames[0].Kind != cell.Ack || frames[0].Sequence != 20 {
+		t.Fatal("WebSocket NFC1 acknowledgement")
+	}
+	checkClassic("classic remains connected through hybrid")
 }
 
 func testCertificate(t *testing.T, dir string) (string, string, *x509.CertPool) {

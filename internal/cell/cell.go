@@ -19,6 +19,7 @@ const (
 	Credit      byte = 5
 	Auth        byte = 6
 	Opened      byte = 7
+	Ack         byte = 8
 )
 
 type Frame struct {
@@ -94,7 +95,7 @@ func Decode(body []byte) (uint32, []Frame, int, error) {
 			return 0, nil, 0, bad
 		}
 		length := uint64(binary.BigEndian.Uint32(body[pos+12 : pos+16]))
-		if length > uint64(used-pos-FrameHeader) || body[pos] < Open || body[pos] > Opened || body[pos+1] != 0 || body[pos+2] != 0 || body[pos+3] != 0 {
+		if length > uint64(used-pos-FrameHeader) || body[pos] < Open || body[pos] > Ack || body[pos+1] != 0 || body[pos+2] != 0 || body[pos+3] != 0 {
 			return 0, nil, 0, bad
 		}
 		f := Frame{Kind: body[pos], Stream: binary.BigEndian.Uint32(body[pos+4 : pos+8]), Sequence: binary.BigEndian.Uint32(body[pos+8 : pos+12])}
