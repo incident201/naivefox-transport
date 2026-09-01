@@ -415,23 +415,20 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			}
 		}
 		pressure = s.peer.Pressure()
+		s.mu.Lock()
+		if s.down == ^uint32(0) {
+			s.mu.Unlock()
+			return
+		}
 		capacity := 512
 		activity := activityIdle
 		if asymmetric {
-			s.mu.Lock()
-			peerActivity := s.wsPeerActivity
-			s.mu.Unlock()
-			activity = serverRealtimeActivity(realtimePressure(pressure.Bytes, pressure.Controls), peerActivity)
+			activity = serverRealtimeActivity(realtimePressure(pressure.Bytes, pressure.Controls), s.wsPeerActivity)
 			capacity = realtimeDownCapacity(activity)
 		} else if pressure.Bytes >= 131072 {
 			capacity = cell.MaxCell
 		} else if pressure.Bytes > 0 {
 			capacity = 65536
-		}
-		s.mu.Lock()
-		if s.down == ^uint32(0) {
-			s.mu.Unlock()
-			return
 		}
 		frames := []cell.Frame{}
 		budget := capacity - cell.Header
