@@ -107,6 +107,17 @@ required before treating reduced finite profiles as a practical transport.
 
 ## Continuous application
 
+The final directional-WS screening experiment ports the four finite activity
+capacities to `nfc1.hybrid.a1` while retaining generic v1 on the same server.
+It first requires codec, state-transition and live H2/H3 correctness gates.
+The short matched screen uses the same active Firefox application and fresh
+generic/asymmetric arms. A full campaign is not admitted unless asymmetric
+reduces complete-session IP bytes by at least 15% and transport filler by at
+least 30% versus generic, while download and upload durations are each no more
+than 10% worse and small/wake latency is no more than 15% worse. Early packet
+views are regression checks because startup is unchanged. Short rows remain
+descriptive and are never spliced into a later primary campaign.
+
 The opt-in `continuous-v1` profile keeps the `staged-fast20` startup job, then
 runs indefinitely. Startup completion is not transport shutdown. A local queue
 notification or a server event can grant another four-slot activity lease:

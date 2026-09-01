@@ -39,11 +39,11 @@ func TestReplacementKeepsCapacity(t *testing.T) {
 func TestFillerOnlyEncodingPreservesUsefulPrefix(t *testing.T) {
 	for _, load := range []int{0, 131072, MaxCell - Header - FrameHeader} {
 		frames := []Frame{{Kind: Data, Stream: 1, Body: bytes.Repeat([]byte{91}, load)}}
-		a, err := encode(3, MaxCell, frames, false)
+		a, err := encode(3, MaxCell, frames, false, PressureIdle)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := encode(3, MaxCell, frames, true)
+		b, err := encode(3, MaxCell, frames, true, PressureIdle)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,12 +68,38 @@ func BenchmarkEncodeFiller(b *testing.B) {
 				b.SetBytes(MaxCell)
 				b.ReportAllocs()
 				for b.Loop() {
-					if _, err := encode(1, MaxCell, frames, suffix); err != nil {
+					if _, err := encode(1, MaxCell, frames, suffix, PressureIdle); err != nil {
 						b.Fatal(err)
 					}
 				}
 			})
 		}
+	}
+}
+
+func TestRealtimePressureHintIsIsolatedFromHTTPCodec(t *testing.T) {
+	for _, hint := range []PressureHint{PressureIdle, PressureInteractive, PressureBulk} {
+		body, err := EncodeRealtime(7, 16384, hint, []Frame{{Kind: Credit, Stream: 1, Body: Uint32(4096)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sequence, frames, _, decodedHint, err := DecodeRealtime(body)
+		if err != nil || sequence != 7 || decodedHint != hint || len(frames) != 1 {
+			t.Fatalf("realtime round trip: hint=%d decoded=%d error=%v", hint, decodedHint, err)
+		}
+		if hint != PressureIdle {
+			if _, _, _, err := Decode(body); err == nil {
+				t.Fatal("HTTP codec accepted realtime pressure hint")
+			}
+		}
+	}
+	bad, _ := EncodeRealtime(0, 512, PressureIdle, nil)
+	bad[14] = byte(PressureBulk + 1)
+	if _, _, _, _, err := DecodeRealtime(bad); err == nil {
+		t.Fatal("accepted unknown realtime pressure hint")
+	}
+	if _, err := EncodeRealtime(0, 512, PressureBulk+1, nil); err == nil {
+		t.Fatal("encoded unknown realtime pressure hint")
 	}
 }
 

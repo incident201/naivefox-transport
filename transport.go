@@ -56,6 +56,9 @@ type counters struct {
 	WSMessagesIn              uint64            `json:"ws_messages_in"`
 	WSMessagesOut             uint64            `json:"ws_messages_out"`
 	WSCellCapacities          map[string]uint64 `json:"ws_cell_capacities,omitempty"`
+	WSSubprotocols            map[string]uint64 `json:"ws_subprotocols,omitempty"`
+	WSActivities              map[string]uint64 `json:"ws_activities,omitempty"`
+	WSHints                   map[string]uint64 `json:"ws_hints,omitempty"`
 	WSStartupMinUp            uint32            `json:"ws_startup_min_up"`
 	WSStartupMinDown          uint32            `json:"ws_startup_min_down"`
 	StartupCompleted          uint64            `json:"startup_completed"`
@@ -103,6 +106,8 @@ type session struct {
 	ackSequence    uint32
 	wsStartupUp    uint32
 	wsStartupDown  uint32
+	wsPeerHint     cell.PressureHint
+	wsPeerActivity realtimeActivity
 }
 
 func (s *session) close() {

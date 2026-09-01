@@ -12,7 +12,124 @@ import (
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
-const realtimeProtocol = "nfc1.hybrid.v1"
+const (
+	realtimeProtocol     = "nfc1.hybrid.v1"
+	realtimeAsymProtocol = "nfc1.hybrid.a1"
+)
+
+type realtimeActivity string
+
+const (
+	activityIdle        realtimeActivity = "idle"
+	activityInteractive realtimeActivity = "interactive"
+	activityDownload    realtimeActivity = "download"
+	activityUpload      realtimeActivity = "upload"
+	activityMixed       realtimeActivity = "mixed"
+)
+
+func realtimePressure(bytes int64, controls int) cell.PressureHint {
+	if bytes >= 32768 {
+		return cell.PressureBulk
+	}
+	if bytes > 0 || controls > 0 {
+		return cell.PressureInteractive
+	}
+	return cell.PressureIdle
+}
+
+func usefulBytes(frames []cell.Frame) uint64 {
+	var result uint64
+	for _, frame := range frames {
+		if frame.Kind == cell.Data {
+			result += uint64(len(frame.Body))
+		}
+	}
+	return result
+}
+
+func clientRealtimeActivity(local, peer cell.PressureHint) realtimeActivity {
+	if local == cell.PressureBulk && peer == cell.PressureBulk {
+		return activityMixed
+	}
+	if local == cell.PressureBulk {
+		return activityUpload
+	}
+	if peer == cell.PressureBulk {
+		return activityDownload
+	}
+	if local == cell.PressureInteractive || peer == cell.PressureInteractive {
+		return activityInteractive
+	}
+	return activityIdle
+}
+
+func realtimeDownCapacity(activity realtimeActivity) int {
+	switch activity {
+	case activityDownload:
+		return cell.MaxCell
+	case activityMixed:
+		return 65536
+	case activityInteractive, activityUpload:
+		return 8192
+	default:
+		return 512
+	}
+}
+
+func realtimeUpCapacity(activity realtimeActivity) int {
+	switch activity {
+	case activityDownload:
+		return 16384
+	case activityUpload, activityMixed:
+		return 131072
+	case activityInteractive:
+		return 4096
+	default:
+		return 512
+	}
+}
+
+func realtimePeerActivity(capacity int) realtimeActivity {
+	switch capacity {
+	case 4096:
+		return activityInteractive
+	case 16384:
+		return activityDownload
+	case 131072:
+		return activityUpload
+	default:
+		return activityIdle
+	}
+}
+
+func realtimeActivityFromHint(hint cell.PressureHint) realtimeActivity {
+	if hint == cell.PressureBulk {
+		return activityUpload
+	}
+	if hint == cell.PressureInteractive {
+		return activityInteractive
+	}
+	return activityIdle
+}
+
+func serverRealtimeActivity(local cell.PressureHint, peer realtimeActivity) realtimeActivity {
+	if local == cell.PressureBulk && (peer == activityUpload || peer == activityMixed) {
+		return activityMixed
+	}
+	if local == cell.PressureBulk {
+		return activityDownload
+	}
+	if peer == activityDownload {
+		return activityDownload
+	}
+	if peer == activityUpload || peer == activityMixed {
+		return activityUpload
+	}
+	if local == cell.PressureInteractive || peer == activityInteractive {
+		return activityInteractive
+	}
+	return activityIdle
+}
 
 type observedResponse struct {
 	http.ResponseWriter
@@ -92,12 +209,18 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request) error {
 		t.reject(w)
 		return nil
 	}
-	supported := false
-	for _, protocol := range websocket.Subprotocols(r) {
-		supported = supported || protocol == realtimeProtocol
+	protocol := ""
+	for _, offered := range websocket.Subprotocols(r) {
+		if offered == realtimeAsymProtocol {
+			protocol = realtimeAsymProtocol
+			break
+		}
+		if offered == realtimeProtocol {
+			protocol = realtimeProtocol
+		}
 	}
 	s.mu.Lock()
-	ready := supported && !s.realtime && !s.startupInvalid && s.startupSteps == 40 && s.up >= 20 && s.down >= 20 && s.httpActive == 0
+	ready := protocol != "" && !s.realtime && !s.startupInvalid && s.startupSteps == 40 && s.up >= 20 && s.down >= 20 && s.httpActive == 0
 	select {
 	case <-s.peer.Done():
 		ready = false
@@ -112,7 +235,7 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	upgrader := websocket.Upgrader{
-		Subprotocols:   []string{realtimeProtocol},
+		Subprotocols:   []string{protocol},
 		ReadBufferSize: 4096, WriteBufferSize: 4096,
 		EnableCompression: false,
 		CheckOrigin: func(request *http.Request) bool {
@@ -141,6 +264,16 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request) error {
 	if t.stats.WSCellCapacities == nil {
 		t.stats.WSCellCapacities = make(map[string]uint64)
 	}
+	if t.stats.WSSubprotocols == nil {
+		t.stats.WSSubprotocols = make(map[string]uint64)
+	}
+	if t.stats.WSActivities == nil {
+		t.stats.WSActivities = make(map[string]uint64)
+	}
+	if t.stats.WSHints == nil {
+		t.stats.WSHints = make(map[string]uint64)
+	}
+	t.stats.WSSubprotocols[protocol]++
 	t.stats.Requests["GET /api/realtime"]++
 	t.stats.Protocols["HTTP/1.1"]++
 	t.mu.Unlock()
@@ -157,22 +290,32 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request) error {
 		for {
 			conn.SetReadDeadline(time.Now().Add(75 * time.Second))
 			kind, body, err := conn.ReadMessage()
-			if err != nil || kind != websocket.BinaryMessage || t.receiveRealtime(s, body) != nil {
+			if err != nil || kind != websocket.BinaryMessage || t.receiveRealtime(s, body, protocol == realtimeAsymProtocol) != nil {
 				return
 			}
 		}
 	}()
-	t.writeRealtime(ctx, conn, s, 25*time.Second)
+	t.writeRealtime(ctx, conn, s, 25*time.Second, protocol == realtimeAsymProtocol)
 	conn.Close()
 	<-readerDone
 	return nil
 }
 
-func (t *Transport) receiveRealtime(s *session, body []byte) error {
-	if len(body) != 512 && len(body) != 65536 && len(body) != cell.MaxCell {
+func (t *Transport) receiveRealtime(s *session, body []byte, asymmetric bool) error {
+	if (!asymmetric && len(body) != 512 && len(body) != 65536 && len(body) != cell.MaxCell) ||
+		(asymmetric && len(body) != 512 && len(body) != 4096 && len(body) != 16384 && len(body) != 131072) {
 		return errors.New("realtime capacity")
 	}
-	sequence, frames, filler, err := cell.Decode(body)
+	var sequence uint32
+	var frames []cell.Frame
+	var filler int
+	var err error
+	hint := cell.PressureIdle
+	if asymmetric {
+		sequence, frames, filler, hint, err = cell.DecodeRealtime(body)
+	} else {
+		sequence, frames, filler, err = cell.Decode(body)
+	}
 	if err != nil {
 		return err
 	}
@@ -199,6 +342,10 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	}
 	s.up++
 	s.last = time.Now()
+	if asymmetric {
+		s.wsPeerHint = hint
+		s.wsPeerActivity = realtimePeerActivity(len(body))
+	}
 	if len(frames) != 0 {
 		s.ackPending, s.ackSequence = true, sequence
 	}
@@ -210,6 +357,9 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	t.mu.Lock()
 	t.stats.WSMessagesIn++
 	t.stats.WSCellCapacities["in "+strconv.Itoa(len(body))]++
+	if asymmetric {
+		t.stats.WSHints["in "+strconv.Itoa(int(hint))]++
+	}
 	t.stats.UploadBytes += uint64(len(body))
 	t.stats.UploadFiller += uint64(filler)
 	t.stats.UploadUseful += useful
@@ -218,7 +368,7 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	return nil
 }
 
-func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *session, idleInterval time.Duration) {
+func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *session, idleInterval time.Duration, asymmetric bool) {
 	heartbeat := time.NewTimer(idleInterval)
 	defer heartbeat.Stop()
 	for {
@@ -240,21 +390,37 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			case <-s.wake:
 				continue
 			}
-		} else if pressure.Bytes > 0 && pressure.Bytes < cell.MaxCell {
-			coalesce := time.NewTimer(2 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				coalesce.Stop()
-				return
-			case <-s.peer.Done():
-				coalesce.Stop()
-				return
-			case <-coalesce.C:
+		} else if pressure.Bytes > 0 {
+			capacity := cell.MaxCell
+			if asymmetric {
+				s.mu.Lock()
+				peerActivity := s.wsPeerActivity
+				s.mu.Unlock()
+				capacity = realtimeDownCapacity(serverRealtimeActivity(realtimePressure(pressure.Bytes, pressure.Controls), peerActivity))
+			}
+			if pressure.Bytes < int64(capacity) {
+				coalesce := time.NewTimer(2 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					coalesce.Stop()
+					return
+				case <-s.peer.Done():
+					coalesce.Stop()
+					return
+				case <-coalesce.C:
+				}
 			}
 		}
 		pressure = s.peer.Pressure()
 		capacity := 512
-		if pressure.Bytes >= 131072 {
+		activity := activityIdle
+		if asymmetric {
+			s.mu.Lock()
+			peerActivity := s.wsPeerActivity
+			s.mu.Unlock()
+			activity = serverRealtimeActivity(realtimePressure(pressure.Bytes, pressure.Controls), peerActivity)
+			capacity = realtimeDownCapacity(activity)
+		} else if pressure.Bytes >= 131072 {
 			capacity = cell.MaxCell
 		} else if pressure.Bytes > 0 {
 			capacity = 65536
@@ -272,7 +438,21 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			s.ackPending = false
 		}
 		frames = append(frames, s.peer.Take(budget)...)
+		hint := cell.PressureIdle
+		if asymmetric {
+			post := s.peer.Pressure()
+			state, _ := downstreamState(post, capacity, usefulBytes(frames), true)
+			if state == "download" {
+				hint = cell.PressureBulk
+			} else if state == "interactive" {
+				hint = cell.PressureInteractive
+			}
+			s.wsPeerActivity = realtimeActivityFromHint(s.wsPeerHint)
+		}
 		body, err := cell.Encode(s.down, capacity, frames)
+		if asymmetric {
+			body, err = cell.EncodeRealtime(s.down, capacity, hint, frames)
+		}
 		if err == nil {
 			s.down++
 			s.last = time.Now()
@@ -298,6 +478,10 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 		}
 		t.stats.WSMessagesOut++
 		t.stats.WSCellCapacities["out "+strconv.Itoa(capacity)]++
+		if asymmetric {
+			t.stats.WSActivities["out "+string(activity)]++
+			t.stats.WSHints["out "+strconv.Itoa(int(hint))]++
+		}
 		t.stats.DownloadBytes += uint64(len(body))
 		t.stats.DownloadFiller += uint64(len(body) - used)
 		t.stats.DownloadUseful += useful

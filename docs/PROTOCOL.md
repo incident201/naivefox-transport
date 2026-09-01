@@ -193,6 +193,39 @@ any nonempty client frame list closes their WS before opening a target. This
 supports the gallery's `#realtime` visitor path without putting proxy credentials
 in the page. There is no resume, retransmission or HTTP fallback after failure.
 
+### Asymmetric realtime experiment
+
+The optional `nfc1.hybrid.a1` subprotocol has the same byte length as the
+generic `nfc1.hybrid.v1` token and shares its startup, session, mux, credit and
+failure contracts. Generic v1 keeps the 512/65536/262144 message policy above.
+The asymmetric variant uses NFC1 header byte 14, which is reserved and zero in
+HTTP and generic v1 cells, as a residual pressure hint: 0 idle, 1 interactive,
+2 bulk. Byte 15 remains zero. Ordinary HTTP decoding rejects every nonzero
+hint, and asymmetric decoding rejects unknown hints.
+
+The hint describes sendable pressure remaining after the sender extracted the
+current cell. It affects only the next message already needed for DATA, CREDIT,
+FIN, RESET, ACK, OPEN, or heartbeat work. A hint never creates a message by
+itself, avoiding a self-sustaining filler loop. A 32768-byte threshold
+separates bulk from interactive pressure.
+
+| Activity | Client to server | Server to client |
+| --- | ---: | ---: |
+| Download | 16384 | 262144 |
+| Upload | 131072 | 8192 |
+| Interactive | 4096 | 8192 |
+| Mixed | 131072 | 65536 |
+| Idle heartbeat | 512 | 512 |
+
+Local bulk plus peer bulk selects mixed. Client-only bulk selects upload;
+server-only bulk selects download. Otherwise either interactive side selects
+interactive, then idle. The server computes its residual hint after `Take`
+using the existing continuous-pipeline downstream state, including its single
+productive credit handoff. Uplink capacity identifies the current client
+activity for the immediate response; the carried hint describes later work.
+The 2-ms coalescing turn remains for partial payload and OPEN, but fully ready
+directional capacity and pure control work dispatch immediately.
+
 ## Continuous lifecycle
 
 At lease boundaries, use ready local bytes/control frames and the latest
