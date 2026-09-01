@@ -142,7 +142,7 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 	if t.LegacyKey != nil || t.LegacyTargets != nil {
 		return errors.New("key and allowed_targets were removed; move forward_proxy inside naivefox_transport and configure basic_auth once for both transports")
 	}
-	application, err := loadApplication(t.ApplicationRoot, t.appProfile())
+	application, err := loadApplication(t.ApplicationRoot)
 	if err != nil {
 		return fmt.Errorf("load application: %w", err)
 	}

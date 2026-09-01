@@ -30,8 +30,6 @@ jobs:
         run: bash tools/go.sh go test -race ./...
       - name: Browser protocol tests
         run: node --test test/*.test.js
-      - name: Application manifest generator tests
-        run: python3 test/application_manifest_test.py -v
       - name: Build both Caddy modules
         run: |
           GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6
@@ -44,4 +42,4 @@ jobs:
           assert b'A small window into a changing world.' not in binary
           PY
       - name: Verify TLS cohosting with the actual binary
-        run: NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .
+        run: NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run 'TestCombinedCaddy(TLS|RejectsInvalidExternalApplication)' -count=1 .

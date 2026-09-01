@@ -30,15 +30,16 @@ or silently substituted. `append_mode` must be false for the native client.
    AUTH body must fit the first cell (4064 bytes available after headers).
    Additional frames may follow AUTH when capacity permits.
 
-The application directory is not part of the NFC1 codec. Caddy validates its
-fixed seven public files and two browser-runtime sources during provisioning,
-requires their raw sizes and SHA-256 values to match the strict
-`application.json` inventory, injects the selected profile into the script, pads every public response to the
-capacities above, and retains one immutable memory snapshot. Missing, relative,
-unreadable, malformed or oversized bundles fail provisioning. HTTP requests
-never read application files from disk. File contents may be customized, but
-the paths, capacities, MIME types, root resource references and three script
-markers remain fixed. See [the template contract](../template/README.md).
+The application directory is not part of the NFC1 codec. During provisioning,
+Caddy reads and validates the fixed seven public files twice, requires two
+identical complete snapshots, pads every response to the capacities above, and
+retains one immutable memory snapshot. Missing, relative, unreadable, malformed,
+special, symlinked, concurrently changing or oversized bundles fail
+provisioning. HTTP requests never read application files from disk. The
+production JavaScript is served verbatim before padding and has no injected
+profile, NFC1 runtime, carrier endpoint names or required markers. File contents
+may be customized, while the paths, capacities, MIME types and root resource
+references remain fixed. See [the template contract](../template/README.md).
 
 AUTH is accepted once per session and compared in constant time. Empty
 unauthenticated cells are permitted for ordinary visitors; they cannot open
@@ -198,11 +199,12 @@ cell application, not local socket delivery: CREDIT still follows actual local
 writes, and FIN still preserves the opposite direction.
 
 Authenticated startup permits ordinary OPEN/DATA/CREDIT/FIN/RESET frames over
-WS. AUTH and re-authentication are forbidden after upgrade. Anonymous ordinary
-visitors may complete empty startup and enter an empty realtime lifecycle, but
-any nonempty client frame list closes their WS before opening a target. This
-supports the gallery's `#realtime` visitor path without putting proxy credentials
-in the page. There is no resume, retransmission or HTTP fallback after failure.
+WS. AUTH and re-authentication are forbidden after upgrade. Anonymous test
+clients may complete empty startup and enter an empty realtime lifecycle, but
+any nonempty client frame list closes their WS before opening a target. The
+source-only `lab/browser-application` fixture exercises that path; production
+templates do not include or reference it. There is no resume, retransmission or
+HTTP fallback after failure.
 
 ### Asymmetric realtime experiment
 

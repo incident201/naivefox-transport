@@ -3,9 +3,9 @@ package transport
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -121,9 +121,9 @@ func TestFixedProfiles(t *testing.T) {
 				return w
 			}
 			js := request("GET", "/assets/app.js", nil)
-			encoded, _ := json.Marshal(profile)
-			if js.Code != 200 || js.Body.Len() != 24576 || !bytes.Contains(js.Body.Bytes(), encoded) || bytes.Contains(js.Body.Bytes(), []byte("__NFC_PROFILE__")) {
-				t.Fatal("fixed script profile")
+			templateScript := mustReadFile(t, filepath.Join(testApplicationRoot(t), "assets", "app.js"))
+			if js.Code != 200 || js.Body.Len() != 24576 || !bytes.HasPrefix(js.Body.Bytes(), templateScript) {
+				t.Fatal("external application script")
 			}
 			for round := 0; round < profile.Rounds; round++ {
 				media := round >= 2 && round < profile.Rounds-2

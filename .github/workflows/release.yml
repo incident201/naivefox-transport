@@ -33,7 +33,6 @@ jobs:
           bash tools/go.sh go mod verify
           bash tools/go.sh go test -race ./...
           node --test test/*.test.js
-          python3 test/application_manifest_test.py -v
       - name: Build Caddy with both proxy modules
         run: |
           GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6
@@ -50,7 +49,7 @@ jobs:
           assert b'FIELD ATLAS / OBSERVATORY' not in binary
           assert b'A small window into a changing world.' not in binary
           PY
-          NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .
+          NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run 'TestCombinedCaddy(TLS|RejectsInvalidExternalApplication)' -count=1 .
       - name: Prepare binary, checksum, and provenance
         id: metadata
         env:

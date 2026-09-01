@@ -43,7 +43,6 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	templateRoot := copyApplicationTemplate(t)
 	customRoot := append(mustReadFile(t, filepath.Join(templateRoot, "index.html")), []byte("<!-- actual external application -->")...)
 	writeApplicationFile(t, templateRoot, "index.html", customRoot)
-	refreshApplicationManifest(t, templateRoot)
 	// Use a different loopback host from the proxy so a hostname-only Caddy
 	// route cannot accidentally admit CONNECT because both authorities happen
 	// to contain 127.0.0.1.
@@ -348,7 +347,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	checkClassicH2("classic h2 remains connected through hybrid")
 }
 
-func TestCombinedCaddyRejectsStaleApplicationManifest(t *testing.T) {
+func TestCombinedCaddyRejectsInvalidExternalApplication(t *testing.T) {
 	binary := os.Getenv("NAIVEFOX_CADDY_BIN")
 	if binary == "" {
 		t.Skip("set NAIVEFOX_CADDY_BIN to the combined Caddy executable")
@@ -357,7 +356,7 @@ func TestCombinedCaddyRejectsStaleApplicationManifest(t *testing.T) {
 	certFile, keyFile, _ := testCertificate(t, dir)
 	templateRoot := copyApplicationTemplate(t)
 	stylePath := filepath.Join(templateRoot, "assets", "site.css")
-	style := append(mustReadFile(t, stylePath), []byte("\n/* stale manifest */\n")...)
+	style := []byte{0xff, 0xfe}
 	if err := os.WriteFile(stylePath, style, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -389,8 +388,8 @@ func TestCombinedCaddyRejectsStaleApplicationManifest(t *testing.T) {
 		"NAIVEFOX_APP_ROOT="+templateRoot,
 		"NAIVEFOX_USER=fixture", "NAIVEFOX_PASSWORD=fixture")
 	output, err := command.CombinedOutput()
-	if err == nil || !bytes.Contains(output, []byte("does not match application.json")) {
-		t.Fatalf("stale application manifest validation: %v\n%s", err, output)
+	if err == nil || !bytes.Contains(output, []byte("NUL-free UTF-8")) {
+		t.Fatalf("invalid external application validation: %v\n%s", err, output)
 	}
 }
 

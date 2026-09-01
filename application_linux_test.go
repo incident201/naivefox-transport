@@ -22,7 +22,7 @@ func TestApplicationFIFOIsRejectedWithoutBlockingProvision(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := loadApplication(root, profiles[defaultProfile])
+		_, err := loadApplication(root)
 		done <- err
 	}()
 	select {

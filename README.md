@@ -95,11 +95,12 @@ client/server directions. Idle remains 512 bytes. The server retains
 `nfc1.hybrid.v1` unchanged so generic and asymmetric clients can be compared on
 one binary. Neither hybrid mode is selected implicitly.
 
-Ordinary visitors can open the gallery with `#realtime` to follow the same
-startup and idle WebSocket lifecycle without credentials. The fragment is not
-sent in HTTP. Anonymous WebSockets accept only empty cells and cannot open
-targets; proxy authentication must already have succeeded in startup AUTH.
-See [the wire contract](docs/PROTOCOL.md#optional-realtime-transition) for bounds,
+The separate `lab/browser-application` fixture retains the anonymous
+browser-side carrier lifecycle for protocol tests. It is not part of the
+production template or release archive. Anonymous WebSockets accept only empty
+cells and cannot open targets; proxy authentication must already have succeeded
+in startup AUTH. See
+[the wire contract](docs/PROTOCOL.md#optional-realtime-transition) for bounds,
 acknowledgements and failure handling. Functional tests do not establish a
 performance or camouflage improvement.
 
@@ -111,10 +112,9 @@ on PATH, then run:
 ```sh
 bash tools/go.sh go test -race ./...
 node --test test/*.test.js
-python3 test/application_manifest_test.py -v
 bash tools/build.sh
 ./artifacts/bin/caddy list-modules
-NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .
+NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run 'TestCombinedCaddy(TLS|RejectsInvalidExternalApplication)' -count=1 .
 ```
 
 `tools/build.sh` builds the optional laboratory bridge and a single Caddy binary
@@ -205,14 +205,13 @@ upstream instead of enforcing those local destination rules. No-connect
 performs cancellable dialing, preserves TCP half-close and validates HTTPS
 upstream certificates, including on loopback.
 
-The module requires an absolute `application_root`. It validates the strict
-`application.json` size/SHA-256 inventory, renders the known template files
-once during provisioning, pads them to the fixed wire capacities, and serves an
-immutable in-memory snapshot. It never reads the application directory on
-individual requests. After customization, run `python3 update-manifest.py .`
-inside the bundle. An invalid or mixed-generation bundle fails validation/reload
-without a built-in fallback. See [the template contract](template/README.md)
-before customizing it.
+The module requires an absolute `application_root`. It reads and validates the
+seven known files twice during provisioning, requires two identical complete
+snapshots, pads them to the fixed wire capacities, and then serves an immutable
+in-memory snapshot. It never reads the directory on individual requests and
+does not require an external generator or manifest. An invalid or concurrently
+changing bundle fails startup/reload without a built-in fallback. See
+[the template contract](template/README.md) before customizing it.
 
 The module owns `/` and its fixed application/assets routes, so an existing
 root page on that hostname is replaced. Classic H3 startup remains supported.
@@ -281,10 +280,9 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 ## Configuration and limits
 
 The JSON handler name is `naivefox_transport`. Its required
-`application_root` string is an absolute path to a complete validated template
-bundle. Its strict `application.json` must match all nine required sources;
-relative, missing, unreadable, incomplete, symlink-escaping, mixed-generation or
-oversized bundles fail provisioning. Its `forward_proxy` object holds the ordinary
+`application_root` string is an absolute path to a complete seven-file
+application. Relative, missing, unreadable, incomplete, symlink-escaping,
+concurrently changing or oversized bundles fail provisioning. Its `forward_proxy` object holds the ordinary
 forwardproxy options without a second `handler` field. Credentials
 must be configured; a missing list or an entirely empty username/password pair
 fails validation: the native classic client sends no authentication for an
@@ -344,11 +342,11 @@ template, validates a local certificate without insecure TLS, exchanges
 no-connect frames over HTTP/2, and keeps padded classic H1 and H2 CONNECT
 tunnels to a distinct target host alive through the same Caddy process.
 
-Go race tests exercise framing, authorization, application snapshots, manifest
-validation, replay rejection, concurrent streams, both laboratory proxy
-frontends, transfers larger than the credit window, half-close and cancellation.
-JavaScript tests retain browser lifecycle and response-validation coverage; the
-Python tests verify safe atomic manifest generation. They do not require Firefox.
+Go race tests exercise framing, authorization, external application snapshots,
+filesystem validation, replay rejection, concurrent streams, both laboratory
+proxy frontends, transfers larger than the credit window, half-close and
+cancellation. JavaScript tests retain the separate laboratory browser lifecycle
+and response-validation coverage. They do not require Firefox.
 
 The pre-extraction history is preserved. No new license grant is implied by
 moving that existing source to a separate repository; dependency licenses remain

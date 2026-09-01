@@ -1,7 +1,7 @@
 "use strict";
 const assert=require("node:assert/strict");
 const test=require("node:test");
-const {bulkPair,runLifecycle,WakeLatch}=require("../template/runtime/lifecycle.js");
+const {bulkPair,runLifecycle,WakeLatch}=require("../lab/browser-application/lifecycle.js");
 const deferred=()=>{let resolve;const promise=new Promise(value=>resolve=value);return {promise,resolve};};
 
 test("paired overlap waits for first headers and upload IPC, then delivers in order",async()=>{
