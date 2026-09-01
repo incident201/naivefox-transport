@@ -11,7 +11,7 @@ import (
 )
 
 func TestInteractiveOnlyRouteBudgetReplayAndIsolation(t *testing.T) {
-	m := &Transport{Profile: "continuous-bulk-pipeline-interactive", ForwardProxy: testForwardProxy()}
+	m := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: "continuous-bulk-pipeline-interactive", ForwardProxy: testForwardProxy()}
 	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}

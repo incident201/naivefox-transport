@@ -12,7 +12,7 @@ import (
 )
 
 func TestAnonymousVisitsCannotOccupyAuthenticatedCapacity(t *testing.T) {
-	m := &Transport{ForwardProxy: testForwardProxy(), MaxSessions: 2}
+	m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy(), MaxSessions: 2}
 	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}

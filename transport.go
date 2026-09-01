@@ -1,10 +1,8 @@
 package transport
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,24 +23,23 @@ import (
 	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
-//go:embed site/*
-var site embed.FS
-
 func init() { caddy.RegisterModule(Transport{}) }
 
 type Transport struct {
-	Profile      string                `json:"profile,omitempty"`
-	AppendMode   bool                  `json:"append_mode,omitempty"`
-	StatsPath    string                `json:"stats_path,omitempty"`
-	ForwardProxy *forwardproxy.Handler `json:"forward_proxy"`
-	MaxSessions  int                   `json:"max_sessions,omitempty"`
-	Diagnostics  bool                  `json:"diagnostics,omitempty"`
-	authHashes   [][32]byte
-	policy       *tcpPolicy
+	ApplicationRoot string                `json:"application_root,omitempty"`
+	Profile         string                `json:"profile,omitempty"`
+	AppendMode      bool                  `json:"append_mode,omitempty"`
+	StatsPath       string                `json:"stats_path,omitempty"`
+	ForwardProxy    *forwardproxy.Handler `json:"forward_proxy"`
+	MaxSessions     int                   `json:"max_sessions,omitempty"`
+	Diagnostics     bool                  `json:"diagnostics,omitempty"`
+	authHashes      [][32]byte
+	policy          *tcpPolicy
 	// Retain old field names only to reject migrations explicitly, including
 	// empty values. They never authorize a session or limit destinations.
 	LegacyKey     json.RawMessage `json:"key,omitempty"`
 	LegacyTargets json.RawMessage `json:"allowed_targets,omitempty"`
+	application   applicationFiles
 	mu            sync.Mutex
 	sessions      map[string]*session
 	stats         counters
@@ -145,6 +142,11 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 	if t.LegacyKey != nil || t.LegacyTargets != nil {
 		return errors.New("key and allowed_targets were removed; move forward_proxy inside naivefox_transport and configure basic_auth once for both transports")
 	}
+	application, err := loadApplication(t.ApplicationRoot, t.appProfile())
+	if err != nil {
+		return fmt.Errorf("load application: %w", err)
+	}
+	t.application = application
 	if err := t.provisionForwardProxy(ctx); err != nil {
 		return err
 	}
@@ -319,12 +321,12 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return t.ForwardProxy.ServeHTTP(w, r, next)
 	}
 	path := r.URL.Path
-	_, asset := assetDefinition(path)
+	_, isAsset := t.application.asset(path)
 	bulk := t.appProfile().Bulk && (path == "/api/sync/bulk" || (path == "/api/data/bulk" && !t.appProfile().BulkDuplex))
 	exchange := (t.appProfile().LiveDuplex && (path == "/api/exchange/interactive" || path == "/api/exchange/download" || path == "/api/exchange/upload" || path == "/api/exchange/mixed")) || (t.appProfile().InteractiveDuplex && path == "/api/exchange/interactive")
 	continuousPath := path == "/api/events/idle" || (path == "/api/data/interactive" && !t.appProfile().InteractiveDuplex) || path == "/api/data/download" || path == "/api/data/upload" || path == "/api/data/mixed"
 	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk" || (t.appProfile().Continuous && continuousPath)
-	if !asset && !carrier && !exchange && !bulk {
+	if !isAsset && !carrier && !exchange && !bulk {
 		return t.ForwardProxy.ServeHTTP(w, r, next)
 	}
 	methodLabel, pathLabel, protocolLabel := r.Method, path, r.Proto
@@ -345,7 +347,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	t.mu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if asset {
+	if isAsset {
 		if path != "/" {
 			w.Header().Set("Cache-Control", "public, max-age=3600")
 		}
@@ -366,13 +368,13 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 				w.Header().Set("X-App-Realtime", "websocket-v1")
 			}
 		}
-		body, mime, err := assetBody(path, t.appProfile())
-		if err != nil {
-			return err
+		asset, ok := t.application.asset(path)
+		if !ok {
+			return errors.New("application asset unavailable")
 		}
-		w.Header().Set("Content-Type", mime)
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		_, err = w.Write(body)
+		w.Header().Set("Content-Type", asset.mime)
+		w.Header().Set("Content-Length", strconv.Itoa(len(asset.body)))
+		_, err := w.Write(asset.body)
 		return err
 	}
 	s, err := t.getSession(w, r)
@@ -689,65 +691,6 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 		t.mu.Unlock()
 	}
 	return err
-}
-
-type assetSpec struct {
-	file string
-	size int
-	mime string
-}
-
-func assetDefinition(path string) (assetSpec, bool) {
-	switch path {
-	case "/":
-		return assetSpec{"index.html", 4096, "text/html; charset=utf-8"}, true
-	case "/assets/site.css":
-		return assetSpec{"site.css", 12288, "text/css"}, true
-	case "/assets/app.js":
-		return assetSpec{"app.js", 24576, "text/javascript"}, true
-	}
-	for i := 1; i <= 4; i++ {
-		if path == fmt.Sprintf("/assets/image-%d.svg", i) {
-			return assetSpec{"image.svg", 8192, "image/svg+xml"}, true
-		}
-	}
-	return assetSpec{}, false
-}
-func assetBody(path string, profile ...appProfile) ([]byte, string, error) {
-	spec, ok := assetDefinition(path)
-	if !ok {
-		return nil, "", errors.New("unknown asset")
-	}
-	body, err := site.ReadFile("site/" + spec.file)
-	if err != nil {
-		return nil, "", err
-	}
-	if path == "/assets/app.js" {
-		selected := profiles["v1"]
-		if len(profile) > 0 {
-			selected = profile[0]
-		}
-		value, err := json.Marshal(selected)
-		if err != nil {
-			return nil, "", err
-		}
-		body = bytes.ReplaceAll(body, []byte("__NFC_PROFILE__"), value)
-		reader, err := site.ReadFile("site/read-cell.js")
-		if err != nil {
-			return nil, "", err
-		}
-		body = bytes.ReplaceAll(body, []byte("__NFC_READER__"), reader)
-		lifecycle, err := site.ReadFile("site/lifecycle.js")
-		if err != nil {
-			return nil, "", err
-		}
-		body = bytes.ReplaceAll(body, []byte("__NFC_LIFECYCLE__"), lifecycle)
-	}
-	if len(body) > spec.size {
-		return nil, "", errors.New("asset capacity exceeded")
-	}
-	body = append(body, []byte(strings.Repeat(" ", spec.size-len(body)))...)
-	return body, spec.mime, nil
 }
 
 var _ caddy.Provisioner = (*Transport)(nil)

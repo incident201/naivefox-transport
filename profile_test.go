@@ -9,12 +9,12 @@ import (
 )
 
 func TestDefaultIsMeasuredContinuousPipeline(t *testing.T) {
-	implicit, _ := json.Marshal((&Transport{}).appProfile())
+	implicit, _ := json.Marshal((&Transport{ApplicationRoot: testApplicationRoot(t)}).appProfile())
 	explicit, _ := json.Marshal(profiles["continuous-bulk-pipeline"])
 	if defaultProfile != "continuous-bulk-pipeline" || string(implicit) != string(explicit) {
 		t.Fatal("experimental default mismatch")
 	}
-	p := (&Transport{}).appProfile()
+	p := (&Transport{ApplicationRoot: testApplicationRoot(t)}).appProfile()
 	if !p.Continuous || !p.PairBulk || !p.PipelineBulk || p.ReceiveWindow != 524288 || p.IdleEvents || p.InteractiveDuplex || p.FillerOnly {
 		t.Fatal("default includes an unselected variant")
 	}

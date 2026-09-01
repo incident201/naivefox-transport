@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, activeDuplex} = require("../site/lifecycle.js");
+const {DeliveryFence, shouldDeferDelivery, WakeLatch, activityState, runLifecycle, activeExchange, activeDuplex} = require("../template/runtime/lifecycle.js");
 
 test("interactive-only combined responses do not change upload or mixed states",()=>{
   for(const state of ["interactive","download","upload","mixed","bulk"]){

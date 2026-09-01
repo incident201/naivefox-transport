@@ -1,0 +1,42 @@
+{
+  "files": {
+    "assets/app.js": {
+      "sha256": "99bb7fd55ac542f1481816d07e945c1eb8b1e16d066dbf4a6740c9cce475750b",
+      "size": 10213
+    },
+    "assets/image-1.svg": {
+      "sha256": "df8c647263703bd0ab3fd1df6deb02d7442ffb9a43b2916bfb6d47b8716a4efa",
+      "size": 320
+    },
+    "assets/image-2.svg": {
+      "sha256": "df8c647263703bd0ab3fd1df6deb02d7442ffb9a43b2916bfb6d47b8716a4efa",
+      "size": 320
+    },
+    "assets/image-3.svg": {
+      "sha256": "df8c647263703bd0ab3fd1df6deb02d7442ffb9a43b2916bfb6d47b8716a4efa",
+      "size": 320
+    },
+    "assets/image-4.svg": {
+      "sha256": "df8c647263703bd0ab3fd1df6deb02d7442ffb9a43b2916bfb6d47b8716a4efa",
+      "size": 320
+    },
+    "assets/site.css": {
+      "sha256": "ab7aa7f5a8270bbf452a508366522d47655ce925335fd8d8550761822936e9a9",
+      "size": 752
+    },
+    "index.html": {
+      "sha256": "6c0c9b95927117e59e2679b415a0c95ea07bc770a47a985570e09c62cc2cb63f",
+      "size": 951
+    },
+    "runtime/lifecycle.js": {
+      "sha256": "a63f5c70fe71db689cb0cc71a73677cc0053dcbadf38d31f9d8bca74b1b0a43e",
+      "size": 4699
+    },
+    "runtime/read-cell.js": {
+      "sha256": "a723fa8657bdda6bd1a3522c8a16e73829a0ae21dfb30866cd7e2be3e3aa5347",
+      "size": 4936
+    }
+  },
+  "format": "naivefox-application-v1",
+  "wire_graph": "navigation-assets-api-v1"
+}

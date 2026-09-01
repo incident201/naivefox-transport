@@ -47,7 +47,7 @@ func TestCompatibilityAuthenticationAgainstOrdinaryForwardProxy(t *testing.T) {
 		forwardproxy.EncodeAuthCredentials("", "password"),
 		forwardproxy.EncodeAuthCredentials("username", ""),
 	}
-	m := &Transport{ForwardProxy: &forwardproxy.Handler{AuthCredentials: credentials}}
+	m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: &forwardproxy.Handler{AuthCredentials: credentials}}
 	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestCompatibilityExplicitAuthenticationProvisioningBoundary(t *testing.T) {
 		if err := ordinary.Provision(testCaddyContext(t)); err != nil {
 			t.Fatal(err)
 		}
-		m := &Transport{ForwardProxy: &forwardproxy.Handler{AuthCredentials: credentials}}
+		m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: &forwardproxy.Handler{AuthCredentials: credentials}}
 		if err := m.Provision(testCaddyContext(t)); err == nil {
 			m.Cleanup()
 			t.Fatal("unsupported authentication configuration was accepted")

@@ -36,7 +36,7 @@ func (b *gatedUpload) Close() error {
 func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 	for _, operation := range []string{"expire", "cleanup", "cancel"} {
 		t.Run(operation, func(t *testing.T) {
-			module := &Transport{ForwardProxy: testForwardProxy()}
+			module := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
 			if err := module.Provision(testCaddyContext(t)); err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 }
 
 func TestConcurrentUploadsCommitOneSequence(t *testing.T) {
-	module := &Transport{ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}

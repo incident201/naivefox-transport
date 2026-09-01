@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestInvalidAuthenticationCannotOpenLiveTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	m := &Transport{ForwardProxy: testForwardProxy()}
+	m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
 	m.ForwardProxy.ACL = []forwardproxy.ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}
 	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
@@ -74,6 +75,15 @@ func testForwardProxy() *forwardproxy.Handler {
 	}
 }
 
+func testApplicationRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func testCaddyContext(t *testing.T) caddy.Context {
 	t.Helper()
 	ctx, cancel := caddy.NewContext(caddy.Context{Context: context.Background()})
@@ -82,7 +92,7 @@ func testCaddyContext(t *testing.T) caddy.Context {
 }
 
 func TestSharedCredentials(t *testing.T) {
-	m := &Transport{ForwardProxy: testForwardProxy()}
+	m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
 	m.ForwardProxy.AuthCredentials = append(m.ForwardProxy.AuthCredentials, forwardproxy.EncodeAuthCredentials("another", "p:a:ss"))
 	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
@@ -102,20 +112,20 @@ func TestSharedCredentials(t *testing.T) {
 
 func TestModuleRequiresSharedAuthentication(t *testing.T) {
 	for _, credentials := range [][][]byte{nil, {}, {forwardproxy.EncodeAuthCredentials("", "")}, {[]byte("not-base64")}, {forwardproxy.EncodeAuthCredentials("user", strings.Repeat("a", 4000))}} {
-		m := &Transport{ForwardProxy: &forwardproxy.Handler{AuthCredentials: credentials}}
+		m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: &forwardproxy.Handler{AuthCredentials: credentials}}
 		if err := m.Provision(testCaddyContext(t)); err == nil {
 			m.Cleanup()
 			t.Fatal("unsafe configuration accepted")
 		}
 	}
-	if err := (&Transport{}).Provision(testCaddyContext(t)); err == nil {
+	if err := (&Transport{ApplicationRoot: testApplicationRoot(t)}).Provision(testCaddyContext(t)); err == nil {
 		t.Fatal("missing forward_proxy accepted")
 	}
 }
 
 func TestOneEmptyCredentialPartMatchesClassic(t *testing.T) {
 	for _, pair := range [][2]string{{"", "password"}, {"username", ""}} {
-		m := &Transport{ForwardProxy: testForwardProxy()}
+		m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
 		m.ForwardProxy.AuthCredentials = [][]byte{forwardproxy.EncodeAuthCredentials(pair[0], pair[1])}
 		if err := m.Provision(testCaddyContext(t)); err != nil {
 			t.Fatal(err)

@@ -16,7 +16,7 @@ import (
 )
 
 func TestApplicationCapacityAuthAndReplay(t *testing.T) {
-	module := &Transport{Profile: "v1", ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: "v1", ForwardProxy: testForwardProxy()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestFixedProfiles(t *testing.T) {
 	}
 	for name, profile := range profiles {
 		t.Run(name, func(t *testing.T) {
-			module := &Transport{Profile: name, ForwardProxy: testForwardProxy()}
+			module := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: name, ForwardProxy: testForwardProxy()}
 			if err := module.Provision(testCaddyContext(t)); err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +178,7 @@ func TestFixedProfiles(t *testing.T) {
 }
 
 func TestUnknownProfileRejected(t *testing.T) {
-	module := &Transport{Profile: "typo", ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: "typo", ForwardProxy: testForwardProxy()}
 	if err := module.Provision(testCaddyContext(t)); err == nil {
 		module.Cleanup()
 		t.Fatal("unknown profile accepted")

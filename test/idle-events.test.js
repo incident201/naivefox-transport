@@ -1,6 +1,6 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");
-const {receiveIdle}=require("../site/lifecycle.js");
+const {receiveIdle}=require("../template/runtime/lifecycle.js");
 
 test("empty idle heartbeat does not deliver a cell",async()=>{
   const response={status:204,headers:new Headers(),arrayBuffer:async()=>new ArrayBuffer(0)};

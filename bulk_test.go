@@ -56,7 +56,7 @@ func TestProgressHandoffCannotRenewAnEmptyProbe(t *testing.T) {
 }
 
 func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
-	module := &Transport{Profile: "continuous-bulk", ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: "continuous-bulk", ForwardProxy: testForwardProxy()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestBulkLeaseCapacityReplayAndIsolation(t *testing.T) {
 }
 
 func TestBulkDuplexKeepsOtherStatesUnchanged(t *testing.T) {
-	module := &Transport{Profile: "continuous-bulk-duplex", ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: "continuous-bulk-duplex", ForwardProxy: testForwardProxy()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}

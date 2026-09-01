@@ -31,17 +31,23 @@ overrides JSON. Percent-encode reserved characters in URL credentials. Use
 ## Ready Caddy for Linux x86_64
 
 The [releases](https://github.com/incident201/naivefox-transport/releases) contain
-`caddy-linux-amd64`, its checksum and `build-info.json` with exact revisions.
-The workflow runs the Go, JavaScript and actual-binary tests before publishing.
+`caddy-linux-amd64`, the external application template, their checksums, and
+`build-info.json` with exact revisions. The workflow runs the Go, JavaScript,
+template-validation and actual-binary tests before publishing.
 
 ```sh
 mkdir -p "$HOME/caddy-naivefox-download"
 cd "$HOME/caddy-naivefox-download"
 curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/caddy-linux-amd64
 curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/caddy-linux-amd64.sha256
+curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/naivefox-application-template-v1.tar.gz
+curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/naivefox-application-template-v1.tar.gz.sha256
 sha256sum -c caddy-linux-amd64.sha256
+sha256sum -c naivefox-application-template-v1.tar.gz.sha256
 chmod +x caddy-linux-amd64
 ./caddy-linux-amd64 list-modules | grep -E 'forward_proxy|naivefox_transport'
+mkdir application-template
+tar -xzf naivefox-application-template-v1.tar.gz -C application-template
 ```
 
 The binary includes standard Caddy modules and both proxy modules. If your
@@ -52,9 +58,10 @@ files. You can replace the executable without reinstalling the service or
 deleting its configuration/certificate storage.
 
 This code began as an application-carrier experiment. Its history, optional
-browser/loopback bridge, gallery assets, and experimental profiles remain here
-for reproducibility. They are not dependencies of the native lean NaiveFox
-client. The selected profile is `continuous-bulk-pipeline`: other experimental
+browser/loopback bridge, external gallery template, and experimental profiles
+remain here for reproducibility. The template is a server deployment asset and
+is never linked into the native lean NaiveFox client. The selected profile is
+`continuous-bulk-pipeline`: other experimental
 profiles are not interchangeable with the native client. Historical bandwidth,
 timing, and browser results are in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 Those results do not establish the camouflage quality of a native client.
@@ -104,6 +111,7 @@ on PATH, then run:
 ```sh
 bash tools/go.sh go test -race ./...
 node --test test/*.test.js
+python3 test/application_manifest_test.py -v
 bash tools/build.sh
 ./artifacts/bin/caddy list-modules
 NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .
@@ -147,14 +155,16 @@ build graph.
 
 ## Serve classic and no-connect together
 
-Use [examples/Caddyfile](examples/Caddyfile) with the combined binary. Set only
-server hostname, proxy username and proxy password. Protect the environment
-file and do not commit credentials. The equivalent literal configuration is:
+Use [examples/Caddyfile](examples/Caddyfile) with the combined binary. Set the
+server hostname, absolute application-template path, proxy username and proxy
+password. Protect the environment file and do not commit credentials. The
+equivalent literal configuration is:
 
 ```caddyfile
 :443, proxy.example.com {
     route {
         naivefox_transport {
+            application_root /etc/caddy/naivefox-applications/atlas-v1
             forward_proxy {
                 basic_auth USER PASSWORD
                 hide_ip
@@ -195,10 +205,20 @@ upstream instead of enforcing those local destination rules. No-connect
 performs cancellable dialing, preserves TCP half-close and validates HTTPS
 upstream certificates, including on loopback.
 
-The module serves `/` and its application/assets routes. An existing root page
-on that site is replaced. Classic H3 startup remains supported. Other requests
-pass through forwardproxy to the next handler. Do not put a compression handler
-around carrier routes.
+The module requires an absolute `application_root`. It validates the strict
+`application.json` size/SHA-256 inventory, renders the known template files
+once during provisioning, pads them to the fixed wire capacities, and serves an
+immutable in-memory snapshot. It never reads the application directory on
+individual requests. After customization, run `python3 update-manifest.py .`
+inside the bundle. An invalid or mixed-generation bundle fails validation/reload
+without a built-in fallback. See [the template contract](template/README.md)
+before customizing it.
+
+The module owns `/` and its fixed application/assets routes, so an existing
+root page on that hostname is replaced. Classic H3 startup remains supported.
+Other requests pass through forwardproxy to the next handler. Do not put a
+compression handler around carrier routes. Extra ordinary site files belong in
+a later `file_server` and are outside the validated application graph.
 
 For an existing Ubuntu/Debian `caddy.service`, save the old binary and Caddyfile,
 install this binary separately at `/usr/local/bin/caddy-naivefox`, and validate
@@ -214,8 +234,11 @@ For the usual `/etc/caddy/Caddyfile` service, a concrete upgrade sequence is:
 ```sh
 sudo cp -a /etc/caddy/Caddyfile /etc/caddy/Caddyfile.before-naivefox
 sudo install -m 755 ./caddy-linux-amd64 /usr/local/bin/caddy-naivefox
+sudo install -d -o root -g caddy -m 0750 /etc/caddy/naivefox-applications/atlas-v1
+sudo cp -a ./application-template/. /etc/caddy/naivefox-applications/atlas-v1/
+sudo chown -R root:caddy /etc/caddy/naivefox-applications/atlas-v1
 sudoedit /etc/caddy/Caddyfile
-# Move the existing forward_proxy block into naivefox_transport as shown above.
+# Add application_root and move the existing forward_proxy block as shown above.
 sudo -u caddy /usr/local/bin/caddy-naivefox validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl edit caddy
 ```
@@ -257,8 +280,12 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 
 ## Configuration and limits
 
-The JSON handler name is `naivefox_transport`; its `forward_proxy` object holds
-the ordinary forwardproxy options without a second `handler` field. Credentials
+The JSON handler name is `naivefox_transport`. Its required
+`application_root` string is an absolute path to a complete validated template
+bundle. Its strict `application.json` must match all nine required sources;
+relative, missing, unreadable, incomplete, symlink-escaping, mixed-generation or
+oversized bundles fail provisioning. Its `forward_proxy` object holds the ordinary
+forwardproxy options without a second `handler` field. Credentials
 must be configured; a missing list or an entirely empty username/password pair
 fails validation: the native classic client sends no authentication for an
 entirely empty pair. One empty component in JSON is accepted for compatibility;
@@ -312,14 +339,16 @@ Missing credentials never enable anonymous proxy access.
 
 Keep wire-format, profile, flow-control and routing changes covered by tests.
 The CI workflow runs both suites, builds the combined binary, and runs the
-TLS cohosting test. That test loads the checked-in Caddyfile, validates a local
-certificate without insecure TLS, exchanges no-connect frames over HTTP/2,
-and keeps a classic CONNECT tunnel alive through the same Caddy process.
+TLS cohosting test. That test loads the checked-in Caddyfile and external
+template, validates a local certificate without insecure TLS, exchanges
+no-connect frames over HTTP/2, and keeps padded classic H1 and H2 CONNECT
+tunnels to a distinct target host alive through the same Caddy process.
 
-Go race tests exercise framing, authorization, replay rejection, concurrent
-streams, both laboratory proxy frontends, transfers larger than the credit
-window, half-close and cancellation. JavaScript tests retain browser lifecycle
-and response-validation coverage; they do not require Firefox.
+Go race tests exercise framing, authorization, application snapshots, manifest
+validation, replay rejection, concurrent streams, both laboratory proxy
+frontends, transfers larger than the credit window, half-close and cancellation.
+JavaScript tests retain browser lifecycle and response-validation coverage; the
+Python tests verify safe atomic manifest generation. They do not require Firefox.
 
 The pre-extraction history is preserved. No new license grant is implied by
 moving that existing source to a separate repository; dependency licenses remain

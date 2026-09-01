@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const {readCarrier} = require("../site/read-cell.js");
+const {readCarrier} = require("../template/runtime/read-cell.js");
 
 function cell(capacity = 128, append = false) {
   const used = 39;

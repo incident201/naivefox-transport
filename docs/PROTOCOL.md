@@ -11,7 +11,8 @@ or silently substituted. `append_mode` must be false for the native client.
    using the client's normal HTTP/2 or HTTP/3 stack. No CONNECT, outer WebSocket,
    browser JavaScript runtime, or private loopback bridge is needed by the
    native implementation.
-2. `GET /` returns 200, 4096 bytes of ASCII HTML, and
+2. `GET /` returns 200 and exactly 4096 bytes of padded UTF-8 HTML loaded
+   from the configured external `application_root`, plus
    `X-App-Profile: continuous-bulk-pipeline` and `X-App-Auth: basic`. The native
    client rejects missing or different values before AUTH. The server sets a random 32-byte token,
    hex-encoded as the `app_session` cookie, with Path=/, Secure, HttpOnly and
@@ -28,6 +29,16 @@ or silently substituted. `append_mode` must be false for the native client.
    are the same credentials as classic; no separate key exists. The complete
    AUTH body must fit the first cell (4064 bytes available after headers).
    Additional frames may follow AUTH when capacity permits.
+
+The application directory is not part of the NFC1 codec. Caddy validates its
+fixed seven public files and two browser-runtime sources during provisioning,
+requires their raw sizes and SHA-256 values to match the strict
+`application.json` inventory, injects the selected profile into the script, pads every public response to the
+capacities above, and retains one immutable memory snapshot. Missing, relative,
+unreadable, malformed or oversized bundles fail provisioning. HTTP requests
+never read application files from disk. File contents may be customized, but
+the paths, capacities, MIME types, root resource references and three script
+markers remain fixed. See [the template contract](../template/README.md).
 
 AUTH is accepted once per session and compared in constant time. Empty
 unauthenticated cells are permitted for ordinary visitors; they cannot open

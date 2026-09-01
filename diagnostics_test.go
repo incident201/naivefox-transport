@@ -11,7 +11,7 @@ import (
 
 func TestDiagnosticsRequireExplicitPrivateOptIn(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
-		module := &Transport{ForwardProxy: testForwardProxy(), Diagnostics: enabled}
+		module := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy(), Diagnostics: enabled}
 		if err := module.Provision(testCaddyContext(t)); err != nil {
 			t.Fatal(err)
 		}

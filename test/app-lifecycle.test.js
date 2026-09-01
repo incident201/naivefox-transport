@@ -10,9 +10,9 @@ const {webcrypto} = require("node:crypto");
 async function application(commit, failAction = false, realtime = false) {
   const profile = {rounds: 20, down: 65536, duplex: false, streaming: false, paint_every: 2, commit,
     slots: [8192, 8192, 8192, 8192, 32768, 32768, ...Array(12).fill(65536), 8192, 8192]};
-  const reader = fs.readFileSync(path.join(__dirname, "../site/read-cell.js"), "utf8");
-  const lifecycle = fs.readFileSync(path.join(__dirname, "../site/lifecycle.js"), "utf8");
-  const source = fs.readFileSync(path.join(__dirname, "../site/app.js"), "utf8")
+  const reader = fs.readFileSync(path.join(__dirname, "../template/runtime/read-cell.js"), "utf8");
+  const lifecycle = fs.readFileSync(path.join(__dirname, "../template/runtime/lifecycle.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "../template/assets/app.js"), "utf8")
     .replace("__NFC_PROFILE__", JSON.stringify(profile)).replace("__NFC_READER__", reader).replace("__NFC_LIFECYCLE__", lifecycle);
   const events = [], nodes = new Map();
   const connected = Promise.withResolvers();

@@ -13,6 +13,7 @@ import (
 
 func TestCaddyfileConfiguration(t *testing.T) {
 	input := `naivefox_transport {
+        application_root /absolute/application
         profile continuous-bulk-pipeline
         forward_proxy {
             basic_auth fixture fixture
@@ -27,10 +28,11 @@ func TestCaddyfileConfiguration(t *testing.T) {
 	if err := handler.UnmarshalCaddyfile(caddyfile.NewTestDispenser(input)); err != nil {
 		t.Fatal(err)
 	}
-	if handler.Profile != defaultProfile || handler.StatsPath != "/tmp/transport-stats.json" || handler.AppendMode || handler.ForwardProxy == nil || len(handler.ForwardProxy.AuthCredentials) != 2 || !bytes.Equal(handler.ForwardProxy.AuthCredentials[1], forwardproxy.EncodeAuthCredentials("second", "p:a:ss")) {
+	if handler.ApplicationRoot != "/absolute/application" || handler.Profile != defaultProfile || handler.StatsPath != "/tmp/transport-stats.json" || handler.AppendMode || handler.ForwardProxy == nil || len(handler.ForwardProxy.AuthCredentials) != 2 || !bytes.Equal(handler.ForwardProxy.AuthCredentials[1], forwardproxy.EncodeAuthCredentials("second", "p:a:ss")) {
 		t.Fatal("configuration changed")
 	}
 	handler.StatsPath = ""
+	handler.ApplicationRoot = testApplicationRoot(t)
 	if err := handler.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +47,9 @@ func TestCaddyfileRejectsAmbiguousOptions(t *testing.T) {
 		"naivefox_transport {\n key first\n key second\n}",
 		"naivefox_transport {\n allowed_targets\n}",
 		"naivefox_transport {\n profile\n}",
+		"naivefox_transport {\n application_root\n}",
+		"naivefox_transport {\n application_root /one /two\n}",
+		"naivefox_transport {\n application_root /one\n application_root /two\n}",
 		"naivefox_transport {\n stats_path\n}",
 		"naivefox_transport {\n append_mode true\n}",
 		"naivefox_transport {\n allow_all\n}",
@@ -64,7 +69,7 @@ func TestCaddyfileRejectsAmbiguousOptions(t *testing.T) {
 func TestProfileHandshakeAndCoexistingHandler(t *testing.T) {
 	for _, configured := range []string{"", defaultProfile, "continuous-v1"} {
 		t.Run(configured, func(t *testing.T) {
-			handler := &Transport{Profile: configured, ForwardProxy: testForwardProxy()}
+			handler := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: configured, ForwardProxy: testForwardProxy()}
 			if err := handler.Provision(testCaddyContext(t)); err != nil {
 				t.Fatal(err)
 			}

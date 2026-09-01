@@ -40,6 +40,10 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	}
 	dir := t.TempDir()
 	certFile, keyFile, roots := testCertificate(t, dir)
+	templateRoot := copyApplicationTemplate(t)
+	customRoot := append(mustReadFile(t, filepath.Join(templateRoot, "index.html")), []byte("<!-- actual external application -->")...)
+	writeApplicationFile(t, templateRoot, "index.html", customRoot)
+	refreshApplicationManifest(t, templateRoot)
 	// Use a different loopback host from the proxy so a hostname-only Caddy
 	// route cannot accidentally admit CONNECT because both authorities happen
 	// to contain 127.0.0.1.
@@ -95,6 +99,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"XDG_CONFIG_HOME="+dir, "XDG_DATA_HOME="+dir,
 		"NAIVEFOX_SERVER=https://"+address,
+		"NAIVEFOX_APP_ROOT="+templateRoot,
 		"NAIVEFOX_USER=fixture", "NAIVEFOX_PASSWORD=fixture")
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
@@ -112,7 +117,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
-			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || len(body) != 4096 || response.Header.Get("X-App-Profile") != defaultProfile || response.Header.Get("X-App-Auth") != "basic" {
+			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || len(body) != 4096 || !bytes.Contains(body, []byte("actual external application")) || response.Header.Get("X-App-Profile") != defaultProfile || response.Header.Get("X-App-Auth") != "basic" {
 				t.Fatalf("origin handshake: status=%d protocol=%s length=%d read=%v", response.StatusCode, response.Proto, len(body), readErr)
 			}
 			break
@@ -341,6 +346,52 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	}
 	checkClassic("classic remains connected through hybrid")
 	checkClassicH2("classic h2 remains connected through hybrid")
+}
+
+func TestCombinedCaddyRejectsStaleApplicationManifest(t *testing.T) {
+	binary := os.Getenv("NAIVEFOX_CADDY_BIN")
+	if binary == "" {
+		t.Skip("set NAIVEFOX_CADDY_BIN to the combined Caddy executable")
+	}
+	dir := t.TempDir()
+	certFile, keyFile, _ := testCertificate(t, dir)
+	templateRoot := copyApplicationTemplate(t)
+	stylePath := filepath.Join(templateRoot, "assets", "site.css")
+	style := append(mustReadFile(t, stylePath), []byte("\n/* stale manifest */\n")...)
+	if err := os.WriteFile(stylePath, style, 0644); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	listener.Close()
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example, err := os.ReadFile("examples/Caddyfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := "{\n admin off\n auto_https off\n}\n" + string(example)
+	config = strings.Replace(config, ":443, {$NAIVEFOX_SERVER} {", "https://:"+port+", {$NAIVEFOX_SERVER} {", 1)
+	config = strings.Replace(config, "\troute {", fmt.Sprintf("\ttls %s %s\n\troute {", certFile, keyFile), 1)
+	configFile := filepath.Join(dir, "Caddyfile")
+	if err := os.WriteFile(configFile, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary, "validate", "--adapter", "caddyfile", "--config", configFile)
+	command.Env = append(os.Environ(),
+		"XDG_CONFIG_HOME="+dir, "XDG_DATA_HOME="+dir,
+		"NAIVEFOX_SERVER=https://"+address,
+		"NAIVEFOX_APP_ROOT="+templateRoot,
+		"NAIVEFOX_USER=fixture", "NAIVEFOX_PASSWORD=fixture")
+	output, err := command.CombinedOutput()
+	if err == nil || !bytes.Contains(output, []byte("does not match application.json")) {
+		t.Fatalf("stale application manifest validation: %v\n%s", err, output)
+	}
 }
 
 func testCertificate(t *testing.T, dir string) (string, string, *x509.CertPool) {

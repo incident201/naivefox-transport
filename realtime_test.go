@@ -29,7 +29,7 @@ type realtimeFixture struct {
 
 func newRealtimeFixture(t *testing.T) *realtimeFixture {
 	t.Helper()
-	module := &Transport{ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
 	module.ForwardProxy.ACL = []forwardproxy.ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
@@ -446,7 +446,7 @@ func TestRealtimeIdleAccountingExcludesAcknowledgements(t *testing.T) {
 	}
 	defer peer.Close()
 	s := &session{peer: peer, wake: make(chan struct{}, 1), down: 20, ackPending: true, ackSequence: 20}
-	module := &Transport{stats: counters{WSCellCapacities: make(map[string]uint64), CellCapacities: make(map[string]uint64)}}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), stats: counters{WSCellCapacities: make(map[string]uint64), CellCapacities: make(map[string]uint64)}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	writerDone := make(chan struct{})

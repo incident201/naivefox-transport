@@ -12,7 +12,7 @@ import (
 )
 
 func TestActiveExchangeCapacityAndOrdering(t *testing.T) {
-	module := &Transport{Profile: "continuous-sync", ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: "continuous-sync", ForwardProxy: testForwardProxy()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}

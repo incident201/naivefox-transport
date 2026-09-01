@@ -33,6 +33,7 @@ jobs:
           bash tools/go.sh go mod verify
           bash tools/go.sh go test -race ./...
           node --test test/*.test.js
+          python3 test/application_manifest_test.py -v
       - name: Build Caddy with both proxy modules
         run: |
           GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6
@@ -44,6 +45,11 @@ jobs:
           grep -E '^http\.handlers\.forward_proxy[[:space:]]+github.com/caddyserver/forwardproxy' artifacts/modules.txt
           grep -E '^http\.handlers\.forward_proxy.*=> github.com/klzgrad/forwardproxy' artifacts/modules.txt
           grep -E '^http\.handlers\.naivefox_transport[[:space:]]+github.com/incident201/naivefox-transport' artifacts/modules.txt
+          python3 - <<'PY'
+          binary = open('artifacts/bin/caddy', 'rb').read()
+          assert b'FIELD ATLAS / OBSERVATORY' not in binary
+          assert b'A small window into a changing world.' not in binary
+          PY
           NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run TestCombinedCaddyTLS -count=1 .
       - name: Prepare binary, checksum, and provenance
         id: metadata
@@ -60,9 +66,27 @@ jobs:
           mkdir dist
           install -m 755 artifacts/bin/caddy dist/caddy-linux-amd64
           (cd dist && sha256sum caddy-linux-amd64 > caddy-linux-amd64.sha256)
+          if find template -type l -print -quit | grep -q .; then
+            printf 'template archive must not contain symlinks\n' >&2
+            exit 1
+          fi
+          make_template_archive() {
+            tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+              -C template -cf - . | gzip -n
+          }
+          make_template_archive > dist/naivefox-application-template-v1.tar.gz
+          make_template_archive > dist/naivefox-application-template-v1.second.tar.gz
+          cmp dist/naivefox-application-template-v1.tar.gz dist/naivefox-application-template-v1.second.tar.gz
+          rm dist/naivefox-application-template-v1.second.tar.gz
+          (cd dist && sha256sum naivefox-application-template-v1.tar.gz > naivefox-application-template-v1.tar.gz.sha256)
+          mkdir dist/template-check
+          tar -xzf dist/naivefox-application-template-v1.tar.gz -C dist/template-check
+          diff -qr template dist/template-check
+          rm -rf dist/template-check
           python3 - <<'PY'
           import hashlib, json, os, pathlib, subprocess
           binary = pathlib.Path('dist/caddy-linux-amd64')
+          template = pathlib.Path('dist/naivefox-application-template-v1.tar.gz')
           build_info = subprocess.check_output(['go', 'version', '-m', str(binary)], text=True).splitlines()
           expected_proxy = ['=>', 'github.com/klzgrad/forwardproxy', 'v0.0.0-20250118002110-d62c80d3dd2c']
           assert any(line.split()[:3] == expected_proxy for line in build_info), 'release must use the pinned, unchanged ordinary forwardproxy'
@@ -77,6 +101,13 @@ jobs:
               'go_build_info': build_info,
               'binary': binary.name,
               'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+              'application_template': template.name,
+              'application_template_sha256': hashlib.sha256(template.read_bytes()).hexdigest(),
+              'application_template_contract': 'naivefox-application-v1',
+              'application_template_files': {
+                  str(path.relative_to('template')): hashlib.sha256(path.read_bytes()).hexdigest()
+                  for path in sorted(pathlib.Path('template').rglob('*')) if path.is_file()
+              },
               'modules': pathlib.Path('artifacts/modules.txt').read_text().splitlines(),
           }
           pathlib.Path('dist/build-info.json').write_text(json.dumps(data, indent=2) + '\n')
@@ -108,6 +139,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check caddy-linux-amd64.sha256)
+          (cd dist && sha256sum --check naivefox-application-template-v1.tar.gz.sha256)
           cat > release-notes.md <<EOF
           Caddy 2.11.2 for Linux x86_64 with both forward_proxy and naivefox_transport.
 
@@ -115,12 +147,18 @@ jobs:
 
           Classic and no-connect cohosting requires both the hostless :443 site address and the named proxy hostname shown in the README. A hostname-only route cannot receive classic CONNECT requests whose authority names the destination.
 
+          This release separates the application from the plugin. Download and verify naivefox-application-template-v1.tar.gz, customize a copy under the documented fixed contract, and set application_root to its absolute path. The Caddy binary no longer embeds a fallback application; missing or invalid bundles fail validation.
+
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 
-          Download caddy-linux-amd64 and caddy-linux-amd64.sha256, verify with sha256sum --check caddy-linux-amd64.sha256, and follow the README for safe installation or replacement of an existing Caddy binary. Configuration, certificates, and the systemd service do not need to be reinstalled.
+          Download the binary and application template with both checksum files, verify each with sha256sum --check, and follow the README for installation and the required application_root migration. Certificates and the systemd service do not need to be reinstalled.
 
           Build and runtime checks passed in this workflow before publication.
           EOF
-          gh release create "$RELEASE_TAG" dist/caddy-linux-amd64 dist/caddy-linux-amd64.sha256 dist/build-info.json \
+          gh release create "$RELEASE_TAG" \
+            dist/caddy-linux-amd64 dist/caddy-linux-amd64.sha256 \
+            dist/naivefox-application-template-v1.tar.gz \
+            dist/naivefox-application-template-v1.tar.gz.sha256 \
+            dist/build-info.json \
             --target "$SOURCE_SHA" --title "Caddy 2.11.2 + NaiveFox transport ($RELEASE_TAG)" \
             --notes-file release-notes.md
