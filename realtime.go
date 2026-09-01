@@ -414,8 +414,8 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 				}
 			}
 		}
-		pressure = s.peer.Pressure()
 		s.mu.Lock()
+		pressure = s.peer.Pressure()
 		if s.down == ^uint32(0) {
 			s.mu.Unlock()
 			return
