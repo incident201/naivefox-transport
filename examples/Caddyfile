@@ -1,6 +1,8 @@
 # Set all environment variables before starting Caddy. No credentials belong here.
 # NAIVEFOX_SERVER: the HTTPS hostname (for example proxy.example.com).
-{$NAIVEFOX_SERVER} {
+# The :443 catch-all is required because classic CONNECT uses the destination
+# authority, not the proxy hostname, in the HTTP request.
+:443, {$NAIVEFOX_SERVER} {
 	route {
 		naivefox_transport {
 			forward_proxy {

@@ -113,6 +113,8 @@ jobs:
 
           Both transports share the credentials and access policy of the nested forward_proxy block. No additional transport key or destination allowlist is needed.
 
+          Classic and no-connect cohosting requires both the hostless :443 site address and the named proxy hostname shown in the README. A hostname-only route cannot receive classic CONNECT requests whose authority names the destination.
+
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 
           Download caddy-linux-amd64 and caddy-linux-amd64.sha256, verify with sha256sum --check caddy-linux-amd64.sha256, and follow the README for safe installation or replacement of an existing Caddy binary. Configuration, certificates, and the systemd service do not need to be reinstalled.

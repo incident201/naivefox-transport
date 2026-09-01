@@ -152,7 +152,7 @@ server hostname, proxy username and proxy password. Protect the environment
 file and do not commit credentials. The equivalent literal configuration is:
 
 ```caddyfile
-proxy.example.com {
+:443, proxy.example.com {
     route {
         naivefox_transport {
             forward_proxy {
@@ -166,6 +166,14 @@ proxy.example.com {
     }
 }
 ```
+
+Keep both site addresses. Classic H2/H3 CONNECT carries the destination
+(`example.com:443`), not the proxy hostname, in its HTTP authority. A
+hostname-only site therefore misses ordinary classic tunnels while no-connect
+still appears healthy because its carrier requests use the proxy hostname.
+The `:443` catch-all makes the same handler receive arbitrary CONNECT
+authorities; the named address remains necessary for certificate automation.
+Do not replace this pair with a hostname-only site.
 
 If you already have `forward_proxy`, move its **entire existing block** inside
 `naivefox_transport`, preserving all its options. Do not leave a duplicate

@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,8 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caddyserver/forwardproxy/httpclient"
 	"github.com/gorilla/websocket"
 	"github.com/incident201/naivefox-transport/internal/cell"
+	"golang.org/x/net/http2"
 )
 
 // TestCombinedCaddyTLS exercises the actual combined binary and checked-in
@@ -37,7 +40,10 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	}
 	dir := t.TempDir()
 	certFile, keyFile, roots := testCertificate(t, dir)
-	target, err := net.Listen("tcp", "127.0.0.1:0")
+	// Use a different loopback host from the proxy so a hostname-only Caddy
+	// route cannot accidentally admit CONNECT because both authorities happen
+	// to contain 127.0.0.1.
+	target, err := net.Listen("tcp", "127.0.0.2:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +71,17 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := "{\n admin off\n auto_https off\n}\n" + string(example)
+	_, listenPort, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const siteMarker = ":443, {$NAIVEFOX_SERVER} {"
+	if !strings.Contains(config, siteMarker) {
+		t.Fatal("example must retain the hostless :443 CONNECT route")
+	}
+	config = strings.Replace(config, siteMarker, fmt.Sprintf("https://:%s, {$NAIVEFOX_SERVER} {", listenPort), 1)
 	config = strings.Replace(config, "\troute {", fmt.Sprintf("\ttls %s %s\n\troute {", certFile, keyFile), 1)
-	config = strings.Replace(config, "\t\t\tforward_proxy {", "\t\t\tforward_proxy {\n\t\t\t\tacl {\n\t\t\t\t\tallow 127.0.0.1\n\t\t\t\t}", 1)
+	config = strings.Replace(config, "\t\t\tforward_proxy {", "\t\t\tforward_proxy {\n\t\t\t\tacl {\n\t\t\t\t\tallow 127.0.0.0/8\n\t\t\t\t}", 1)
 	configFile := filepath.Join(dir, "Caddyfile")
 	if err := os.WriteFile(configFile, []byte(config), 0600); err != nil {
 		t.Fatal(err)
@@ -133,7 +148,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	fmt.Fprintf(classic, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", target.Addr(), target.Addr(), base64.StdEncoding.EncodeToString([]byte("fixture:fixture")))
 	reader := bufio.NewReader(classic)
 	connected, err := http.ReadResponse(reader, &http.Request{Method: "CONNECT"})
-	if err != nil || connected.StatusCode != 200 {
+	if err != nil || connected.StatusCode != 200 || connected.Header.Get("Padding") == "" {
 		t.Fatalf("classic CONNECT: response=%v error=%v", connected, err)
 	}
 	checkClassic := func(message string) {
@@ -147,6 +162,63 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		}
 	}
 	checkClassic("classic before no-connect")
+
+	classicH2TLS, err := tls.Dial("tcp", address, &tls.Config{RootCAs: roots, NextProtos: []string{"h2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if classicH2TLS.ConnectionState().NegotiatedProtocol != "h2" {
+		t.Fatalf("classic CONNECT ALPN: %q", classicH2TLS.ConnectionState().NegotiatedProtocol)
+	}
+	classicH2TLS.SetDeadline(time.Now().Add(10 * time.Second))
+	requestBody, requestWriter := io.Pipe()
+	connectURL, err := url.Parse("https://" + target.Addr().String() + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectRequest := &http.Request{
+		Method: http.MethodConnect,
+		URL:    connectURL,
+		Host:   target.Addr().String(),
+		Header: http.Header{
+			"Padding":             []string{"!#$()+<>?@[]^`{}~~~~~~~~~~~~~~~~"},
+			"Proxy-Authorization": []string{"Basic " + base64.StdEncoding.EncodeToString([]byte("fixture:fixture"))},
+		},
+		Body:  requestBody,
+		Proto: "HTTP/2.0", ProtoMajor: 2,
+	}
+	h2Transport := http2.Transport{}
+	h2Client, err := h2Transport.NewClientConn(classicH2TLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectResponse, err := h2Client.RoundTrip(connectRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connectResponse.StatusCode != http.StatusOK || connectResponse.Header.Get("Padding") == "" {
+		t.Fatalf("classic H2 CONNECT: status=%s padding=%q", connectResponse.Status, connectResponse.Header.Get("Padding"))
+	}
+	classicH2 := httpclient.NewHttp2Conn(classicH2TLS, requestWriter, connectResponse.Body)
+	defer classicH2.Close()
+	checkClassicH2 := func(message string) {
+		t.Helper()
+		payload := []byte(message)
+		upload := append([]byte{byte(len(payload) >> 8), byte(len(payload)), 0}, payload...)
+		if _, err := classicH2.Write(upload); err != nil {
+			t.Fatal(err)
+		}
+		header := make([]byte, 3)
+		if _, err := io.ReadFull(classicH2, header); err != nil {
+			t.Fatal(err)
+		}
+		payloadLength := int(header[0])*256 + int(header[1])
+		echo := make([]byte, payloadLength+int(header[2]))
+		if _, err := io.ReadFull(classicH2, echo); err != nil || !bytes.Equal(echo[:payloadLength], payload) {
+			t.Fatalf("classic H2 padded echo: header=%v body=%q error=%v", header, echo, err)
+		}
+	}
+	checkClassicH2("classic h2 before no-connect")
 
 	upload := func(sequence uint32, frames []cell.Frame) {
 		t.Helper()
@@ -213,6 +285,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		t.Fatal("no-connect echo mismatch")
 	}
 	checkClassic("classic remains connected")
+	checkClassicH2("classic h2 remains connected")
 
 	client.Jar, _ = cookiejar.New(nil)
 	response, err := client.Get(origin + "/")
@@ -267,6 +340,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		t.Fatal("WebSocket NFC1 acknowledgement")
 	}
 	checkClassic("classic remains connected through hybrid")
+	checkClassicH2("classic h2 remains connected through hybrid")
 }
 
 func testCertificate(t *testing.T, dir string) (string, string, *x509.CertPool) {
