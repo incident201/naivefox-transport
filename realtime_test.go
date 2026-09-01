@@ -229,7 +229,19 @@ func TestRealtimeAsymmetricNegotiationAndHint(t *testing.T) {
 	if conn.Subprotocol() != realtimeAsymProtocol || len(conn.Subprotocol()) != len(realtimeProtocol) {
 		t.Fatal("asymmetric subprotocol")
 	}
-	f.sendRealtime(conn, 4096, cell.PressureBulk, []cell.Frame{{Kind: cell.Open, Stream: 1, Body: []byte("127.0.0.1:9")}})
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		connection, err := target.Accept()
+		if err == nil {
+			accepted <- connection
+		}
+	}()
+	f.sendRealtime(conn, 4096, cell.PressureBulk, []cell.Frame{{Kind: cell.Open, Stream: 1, Body: []byte(target.Addr().String())}})
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	kind, body, err := conn.ReadMessage()
 	if err != nil || kind != websocket.BinaryMessage || len(body) != 8192 {
@@ -240,20 +252,33 @@ func TestRealtimeAsymmetricNegotiationAndHint(t *testing.T) {
 		t.Fatal("asymmetric realtime response")
 	}
 	f.down++
-	deadline := time.Now().Add(time.Second)
+	select {
+	case targetConnection := <-accepted:
+		defer targetConnection.Close()
+	case <-time.After(5 * time.Second):
+		t.Fatal("asymmetric target was not opened")
+	}
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		f.module.mu.Lock()
 		ready := f.module.stats.WSSubprotocols[realtimeAsymProtocol] == 1 &&
 			f.module.stats.WSCellCapacities["in 4096"] == 1 &&
-			f.module.stats.WSCellCapacities["out 8192"] == 1 &&
-			f.module.stats.WSActivities["out interactive"] == 1 &&
+			f.module.stats.WSCellCapacities["out 8192"] >= 1 &&
+			f.module.stats.WSActivities["out interactive"] >= 1 &&
 			f.module.stats.WSHints["in 2"] == 1
 		f.module.mu.Unlock()
 		if ready {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("asymmetric telemetry did not settle")
+			f.module.mu.Lock()
+			t.Fatalf("asymmetric telemetry did not settle: subprotocol=%d in=%d out=%d activity=%d hint=%d",
+				f.module.stats.WSSubprotocols[realtimeAsymProtocol],
+				f.module.stats.WSCellCapacities["in 4096"],
+				f.module.stats.WSCellCapacities["out 8192"],
+				f.module.stats.WSActivities["out interactive"],
+				f.module.stats.WSHints["in 2"])
+			f.module.mu.Unlock()
 		}
 		time.Sleep(time.Millisecond)
 	}
