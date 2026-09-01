@@ -240,14 +240,22 @@ func TestRealtimeAsymmetricNegotiationAndHint(t *testing.T) {
 		t.Fatal("asymmetric realtime response")
 	}
 	f.down++
-	f.module.mu.Lock()
-	defer f.module.mu.Unlock()
-	if f.module.stats.WSSubprotocols[realtimeAsymProtocol] != 1 ||
-		f.module.stats.WSCellCapacities["in 4096"] != 1 ||
-		f.module.stats.WSCellCapacities["out 8192"] != 1 ||
-		f.module.stats.WSActivities["out interactive"] != 1 ||
-		f.module.stats.WSHints["in 2"] != 1 {
-		t.Fatal("asymmetric telemetry")
+	deadline := time.Now().Add(time.Second)
+	for {
+		f.module.mu.Lock()
+		ready := f.module.stats.WSSubprotocols[realtimeAsymProtocol] == 1 &&
+			f.module.stats.WSCellCapacities["in 4096"] == 1 &&
+			f.module.stats.WSCellCapacities["out 8192"] == 1 &&
+			f.module.stats.WSActivities["out interactive"] == 1 &&
+			f.module.stats.WSHints["in 2"] == 1
+		f.module.mu.Unlock()
+		if ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("asymmetric telemetry did not settle")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
