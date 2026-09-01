@@ -119,6 +119,32 @@ than 15% worse. Early packet
 views are regression checks because startup is unchanged. Short rows remain
 descriptive and are never spliced into a later primary campaign.
 
+The controlled H2 screen stopped this candidate. All six sessions used the
+same active application: Firefox A/B and generic/asymmetric arms completed the
+same resources, twenty GET/POST bootstrap pairs, eleven proxy jobs, one
+application WebSocket, 10,506,240 downloaded bytes, 1,069,056 uploaded bytes,
+and a normal application-WebSocket close. An independent TShark recount of
+the outer flow matched every reported packet and `ip.len` total exactly.
+
+| Listener | Complete IP vs generic | WS filler vs generic | Download rate loss | Upload rate loss | Parallel rate loss |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| SOCKS | +19.85% | +31.97% | +46.30% | +13.79% | +28.72% |
+| HTTP | +9.39% | +14.87% | +40.97% | +0.90% | +15.62% |
+
+The uplink policy did reduce client-to-server filler by 76--80%, but the
+downlink policy increased server-to-client filler by 102--136%. It emitted
+107--116 256-KiB messages, versus 40 in each generic arm, often after a
+fragmented 16-KiB credit return and before enough useful download data had
+accumulated. WS serialization therefore spent the 20-Mbit/s link on the
+partially filled message before delivering its DATA/CREDIT frames.
+
+This is one descriptive mechanism block, not residual inference. Both
+listeners failed the preregistered traffic, filler, and bulk-speed gate, so
+the H3 performance screen and full matrix were not run. The selector remains
+opt-in and non-default for reproducibility. Retrying the direction would
+require a different causal rule, such as granting 256 KiB only when enough
+useful downstream data is already sendable or explicitly coalescing credits.
+
 The opt-in `continuous-v1` profile keeps the `staged-fast20` startup job, then
 runs indefinitely. Startup completion is not transport shutdown. A local queue
 notification or a server event can grant another four-slot activity lease:
