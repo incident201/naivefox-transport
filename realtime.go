@@ -363,6 +363,9 @@ func (t *Transport) receiveRealtime(s *session, body []byte, asymmetric bool) er
 	t.stats.UploadBytes += uint64(len(body))
 	t.stats.UploadFiller += uint64(filler)
 	t.stats.UploadUseful += useful
+	t.stats.WSUploadBytes += uint64(len(body))
+	t.stats.WSUploadFiller += uint64(filler)
+	t.stats.WSUploadUseful += useful
 	t.stats.Opens += opens
 	t.mu.Unlock()
 	return nil
@@ -485,6 +488,9 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 		t.stats.DownloadBytes += uint64(len(body))
 		t.stats.DownloadFiller += uint64(len(body) - used)
 		t.stats.DownloadUseful += useful
+		t.stats.WSDownloadBytes += uint64(len(body))
+		t.stats.WSDownloadFiller += uint64(len(body) - used)
+		t.stats.WSDownloadUseful += useful
 		t.stats.CellCapacities[strconv.Itoa(capacity)]++
 		t.mu.Unlock()
 		heartbeat.Reset(idleInterval)

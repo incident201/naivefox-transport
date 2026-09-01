@@ -59,6 +59,12 @@ type counters struct {
 	WSSubprotocols            map[string]uint64 `json:"ws_subprotocols,omitempty"`
 	WSActivities              map[string]uint64 `json:"ws_activities,omitempty"`
 	WSHints                   map[string]uint64 `json:"ws_hints,omitempty"`
+	WSUploadBytes             uint64            `json:"ws_upload_bytes"`
+	WSDownloadBytes           uint64            `json:"ws_download_bytes"`
+	WSUploadFiller            uint64            `json:"ws_upload_filler"`
+	WSDownloadFiller          uint64            `json:"ws_download_filler"`
+	WSUploadUseful            uint64            `json:"ws_upload_useful"`
+	WSDownloadUseful          uint64            `json:"ws_download_useful"`
 	WSStartupMinUp            uint32            `json:"ws_startup_min_up"`
 	WSStartupMinDown          uint32            `json:"ws_startup_min_down"`
 	StartupCompleted          uint64            `json:"startup_completed"`
