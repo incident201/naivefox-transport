@@ -89,9 +89,11 @@ carrier's existing 32-stream limit requires another session.
 
 The separate experimental selector `no-connect-hybrid-asymmetric` offers the
 equal-length subprotocol `nfc1.hybrid.a1`. It carries a residual pressure hint
-in the reserved NFC1 header and uses directional capacities: download 16/256
-KiB, upload 128/8 KiB, interactive 4/8 KiB, and mixed 128/64 KiB in the
-client/server directions. Idle remains 512 bytes. The server retains
+in the reserved NFC1 header and retains directional capacity sets:
+4/16/128 KiB upstream and 8/64/256 KiB downstream, plus 512-byte controls.
+The current screen grants larger messages only when enough local data is
+sendable within stream credit; peer pressure alone cannot enlarge a grant.
+See the protocol for the exact thresholds. Idle remains 512 bytes. The server retains
 `nfc1.hybrid.v1` unchanged so generic and asymmetric clients can be compared on
 one binary. Neither hybrid mode is selected implicitly.
 

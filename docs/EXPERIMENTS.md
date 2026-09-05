@@ -105,6 +105,20 @@ H3 screen: a late inner completion request still lacked a slot. It is a recorded
 negative experiment, not a liveness fix. An ongoing application lifecycle is
 required before treating reduced finite profiles as a practical transport.
 
+## Ready-capacity native follow-up
+
+The previously unmeasured productive-grant condition is now implemented for the
+native asymmetric WS experiment: allocations depend on actual local sendable
+payload, and control-only responses use 512 bytes. The legal directional
+capacity sets and stream credit remain unchanged. The server also removes an
+entirely discarded encoding pass, keeping fresh randomness in the transmitted
+cell. The activity-only negative screen below remains historical evidence.
+
+The native client's maintained CAPTURE.md and classic-baseline cost/capture
+evidence record the fresh paired measurements. They compare classic, finite
+no-connect and the optimized asymmetric client/server; earlier worker or
+generic-baseline cohorts are not substituted for those controls.
+
 ## Continuous application
 
 The final directional-WS screening experiment ports the four finite activity

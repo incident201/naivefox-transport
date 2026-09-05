@@ -76,6 +76,19 @@ func realtimeDownCapacity(activity realtimeActivity) int {
 	}
 }
 
+func realtimeReadyDownCapacity(bytes int64) int {
+	switch {
+	case bytes >= 131072:
+		return cell.MaxCell
+	case bytes >= 32768:
+		return 65536
+	case bytes > 0:
+		return 8192
+	default:
+		return 512
+	}
+}
+
 func realtimeUpCapacity(activity realtimeActivity) int {
 	switch activity {
 	case activityDownload:
@@ -396,10 +409,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 		} else if pressure.Bytes > 0 {
 			capacity := cell.MaxCell
 			if asymmetric {
-				s.mu.Lock()
-				peerActivity := s.wsPeerActivity
-				s.mu.Unlock()
-				capacity = realtimeDownCapacity(serverRealtimeActivity(realtimePressure(pressure.Bytes, pressure.Controls), peerActivity))
+				capacity = realtimeReadyDownCapacity(pressure.Bytes)
 			}
 			if pressure.Bytes < int64(capacity) {
 				coalesce := time.NewTimer(2 * time.Millisecond)
@@ -424,7 +434,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 		activity := activityIdle
 		if asymmetric {
 			activity = serverRealtimeActivity(realtimePressure(pressure.Bytes, pressure.Controls), s.wsPeerActivity)
-			capacity = realtimeDownCapacity(activity)
+			capacity = realtimeReadyDownCapacity(pressure.Bytes)
 		} else if pressure.Bytes >= 131072 {
 			capacity = cell.MaxCell
 		} else if pressure.Bytes > 0 {
@@ -449,9 +459,12 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			}
 			s.wsPeerActivity = realtimeActivityFromHint(s.wsPeerHint)
 		}
-		body, err := cell.Encode(s.down, capacity, frames)
+		var body []byte
+		var err error
 		if asymmetric {
 			body, err = cell.EncodeRealtime(s.down, capacity, hint, frames)
+		} else {
+			body, err = cell.Encode(s.down, capacity, frames)
 		}
 		if err == nil {
 			s.down++

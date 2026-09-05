@@ -244,8 +244,8 @@ func TestRealtimeAsymmetricNegotiationAndHint(t *testing.T) {
 	f.sendRealtime(conn, 4096, cell.PressureBulk, []cell.Frame{{Kind: cell.Open, Stream: 1, Body: []byte(target.Addr().String())}})
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	kind, body, err := conn.ReadMessage()
-	if err != nil || kind != websocket.BinaryMessage || len(body) != 8192 {
-		t.Fatalf("asymmetric interactive response: bytes=%d error=%v", len(body), err)
+	if err != nil || kind != websocket.BinaryMessage || len(body) != 512 {
+		t.Fatalf("asymmetric control response: bytes=%d error=%v", len(body), err)
 	}
 	sequence, frames, _, hint, err := cell.DecodeRealtime(body)
 	if err != nil || sequence != f.down || hint > cell.PressureBulk || len(frames) == 0 {
@@ -263,7 +263,7 @@ func TestRealtimeAsymmetricNegotiationAndHint(t *testing.T) {
 		f.module.mu.Lock()
 		ready := f.module.stats.WSSubprotocols[realtimeAsymProtocol] == 1 &&
 			f.module.stats.WSCellCapacities["in 4096"] == 1 &&
-			f.module.stats.WSCellCapacities["out 8192"] >= 1 &&
+			f.module.stats.WSCellCapacities["out 512"] >= 1 &&
 			f.module.stats.WSActivities["out interactive"] >= 1 &&
 			f.module.stats.WSHints["in 2"] == 1
 		f.module.mu.Unlock()
@@ -275,7 +275,7 @@ func TestRealtimeAsymmetricNegotiationAndHint(t *testing.T) {
 			t.Fatalf("asymmetric telemetry did not settle: subprotocol=%d in=%d out=%d activity=%d hint=%d",
 				f.module.stats.WSSubprotocols[realtimeAsymProtocol],
 				f.module.stats.WSCellCapacities["in 4096"],
-				f.module.stats.WSCellCapacities["out 8192"],
+				f.module.stats.WSCellCapacities["out 512"],
 				f.module.stats.WSActivities["out interactive"],
 				f.module.stats.WSHints["in 2"])
 			f.module.mu.Unlock()
@@ -530,5 +530,20 @@ func TestRealtimeIdleAccountingExcludesAcknowledgements(t *testing.T) {
 	defer module.mu.Unlock()
 	if module.stats.IdleHeartbeats < 2 || module.stats.WSMessagesOut != module.stats.IdleHeartbeats+1 || module.stats.WSCellCapacities["out 512"] != module.stats.WSMessagesOut {
 		t.Fatal("ACK and idle heartbeat accounting")
+	}
+}
+
+func TestRealtimeReadyDownCapacityDoesNotSpendBulkOnFragmentedCredits(t *testing.T) {
+	for _, tc := range []struct {
+		bytes    int64
+		capacity int
+	}{
+		{0, 512}, {1, 8192}, {16384, 8192}, {32767, 8192},
+		{32768, 65536}, {65536, 65536}, {131071, 65536},
+		{131072, cell.MaxCell}, {524288, cell.MaxCell},
+	} {
+		if got := realtimeReadyDownCapacity(tc.bytes); got != tc.capacity {
+			t.Fatalf("sendable=%d capacity=%d expected=%d", tc.bytes, got, tc.capacity)
+		}
 	}
 }

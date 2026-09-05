@@ -217,27 +217,29 @@ HTTP and generic v1 cells, as a residual pressure hint: 0 idle, 1 interactive,
 hint, and asymmetric decoding rejects unknown hints.
 
 The hint describes sendable pressure remaining after the sender extracted the
-current cell. It affects only the next message already needed for DATA, CREDIT,
-FIN, RESET, ACK, OPEN, or heartbeat work. A hint never creates a message by
+current cell. It is retained for peer observation; capacity grants use local sendable data. A hint never creates a message by
 itself, avoiding a self-sustaining filler loop. A 32768-byte threshold
 separates bulk from interactive pressure.
 
-| Activity | Client to server | Server to client |
-| --- | ---: | ---: |
-| Download | 16384 | 262144 |
-| Upload | 131072 | 8192 |
-| Interactive | 4096 | 8192 |
-| Mixed | 131072 | 65536 |
-| Idle heartbeat | 512 | 512 |
+The current native experiment keeps those legal capacities but grants them
+from actual local sendable bytes, independently of the peer hint:
 
-Local bulk plus peer bulk selects mixed. Client-only bulk selects upload;
-server-only bulk selects download. Otherwise either interactive side selects
-interactive, then idle. The server computes its residual hint after `Take`
-using the existing continuous-pipeline downstream state, including its single
-productive credit handoff. Uplink capacity identifies the current client
-activity for the immediate response; the carried hint describes later work.
-The 2-ms coalescing turn remains for partial payload and OPEN, but fully ready
-directional capacity and pure control work dispatch immediately.
+| Direction | No payload | Small payload | Medium grant | Large grant |
+| --- | ---: | ---: | ---: | ---: |
+| Client to server | 512 B; OPEN uses 4096 B | 4096 B | 16384 B at 8192 B ready | 131072 B at 65536 B ready |
+| Server to client | 512 B | 8192 B | 65536 B at 32768 B ready | 262144 B at 131072 B ready |
+
+Only bytes available within stream credit count. Control-only responses use
+512 bytes even if the peer previously reported bulk pressure. The server
+rechecks sendable bytes after the partial-message coalescing turn. The
+2-ms turn remains for partial payload and OPEN, while full selected capacity
+and pure control dispatch immediately. There is no additional credit delay,
+buffer growth or startup change.
+
+Activity and residual hints remain validated and recorded for observation and
+compatibility; they cannot enlarge the current grant or create a message.
+Each response is encoded once, with fresh random bytes in its unused suffix.
+The earlier activity-selected mapping is preserved in the experiment history.
 
 ## Continuous lifecycle
 
