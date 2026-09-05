@@ -14,7 +14,7 @@ import (
 func TestCaddyfileConfiguration(t *testing.T) {
 	input := `naivefox_transport {
         application_root /absolute/application
-        profile continuous-bulk-pipeline
+        profile native-stream-v1
         forward_proxy {
             basic_auth fixture fixture
             basic_auth second p:a:ss
@@ -28,7 +28,7 @@ func TestCaddyfileConfiguration(t *testing.T) {
 	if err := handler.UnmarshalCaddyfile(caddyfile.NewTestDispenser(input)); err != nil {
 		t.Fatal(err)
 	}
-	if handler.ApplicationRoot != "/absolute/application" || handler.Profile != defaultProfile || handler.StatsPath != "/tmp/transport-stats.json" || handler.AppendMode || handler.ForwardProxy == nil || len(handler.ForwardProxy.AuthCredentials) != 2 || !bytes.Equal(handler.ForwardProxy.AuthCredentials[1], forwardproxy.EncodeAuthCredentials("second", "p:a:ss")) {
+	if handler.ApplicationRoot != "/absolute/application" || handler.Profile != defaultProfile || handler.StatsPath != "/tmp/transport-stats.json" || handler.ForwardProxy == nil || len(handler.ForwardProxy.AuthCredentials) != 2 || !bytes.Equal(handler.ForwardProxy.AuthCredentials[1], forwardproxy.EncodeAuthCredentials("second", "p:a:ss")) {
 		t.Fatal("configuration changed")
 	}
 	handler.StatsPath = ""
@@ -67,7 +67,7 @@ func TestCaddyfileRejectsAmbiguousOptions(t *testing.T) {
 }
 
 func TestProfileHandshakeAndCoexistingHandler(t *testing.T) {
-	for _, configured := range []string{"", defaultProfile, "continuous-v1"} {
+	for _, configured := range []string{"", defaultProfile} {
 		t.Run(configured, func(t *testing.T) {
 			handler := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: configured, ForwardProxy: testForwardProxy()}
 			if err := handler.Provision(testCaddyContext(t)); err != nil {
@@ -90,7 +90,7 @@ func TestProfileHandshakeAndCoexistingHandler(t *testing.T) {
 				}
 				expected := ""
 				if path == "/" {
-					expected = handler.profileName()
+					expected = defaultProfile
 				}
 				if w.Code != 200 || w.Header().Get("X-App-Profile") != expected || (path == "/" && w.Header().Get("X-App-Auth") != "basic") {
 					t.Fatalf("profile handshake on %s: %d %q", path, w.Code, w.Header().Get("X-App-Profile"))

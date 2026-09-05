@@ -28,11 +28,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Test server and browser protocol
+      - name: Test server and application
         run: |
           bash tools/go.sh go mod verify
           bash tools/go.sh go test -race ./...
-          node --test test/*.test.js
+          node --check template/assets/app.js
       - name: Build Caddy with both proxy modules
         run: |
           GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6
@@ -146,7 +146,7 @@ jobs:
 
           Classic and no-connect cohosting requires both the hostless :443 site address and the named proxy hostname shown in the README. A hostname-only route cannot receive classic CONNECT requests whose authority names the destination.
 
-          This release separates the application from the plugin. Download and verify naivefox-application-template-v1.tar.gz, customize a copy under the documented fixed contract, and set application_root to its absolute path. The Caddy binary no longer embeds a fallback application; missing or invalid bundles fail validation.
+          This release supports classic (default in NaiveFox) and the promoted no-connect transport. No-connect now uses native-stream-v1 startup followed by shaped nfc1.stream.v1 WebSocket messages. Upgrade both ends; old finite and hybrid/asymmetric selectors are retired. Download and verify naivefox-application-template-v1.tar.gz, customize a copy under the documented fixed contract, and set application_root to its absolute path. The Caddy binary no longer embeds a fallback application; missing or invalid bundles fail validation.
 
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 

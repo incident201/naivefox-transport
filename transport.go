@@ -28,7 +28,6 @@ func init() { caddy.RegisterModule(Transport{}) }
 type Transport struct {
 	ApplicationRoot string                `json:"application_root,omitempty"`
 	Profile         string                `json:"profile,omitempty"`
-	AppendMode      bool                  `json:"append_mode,omitempty"`
 	StatsPath       string                `json:"stats_path,omitempty"`
 	ForwardProxy    *forwardproxy.Handler `json:"forward_proxy"`
 	MaxSessions     int                   `json:"max_sessions,omitempty"`
@@ -48,45 +47,36 @@ type Transport struct {
 }
 
 type counters struct {
-	WSOpened                  uint64            `json:"ws_opened"`
-	WSClosed                  uint64            `json:"ws_closed"`
-	WSMessagesIn              uint64            `json:"ws_messages_in"`
-	WSMessagesOut             uint64            `json:"ws_messages_out"`
-	WSCellCapacities          map[string]uint64 `json:"ws_cell_capacities,omitempty"`
-	WSSubprotocols            map[string]uint64 `json:"ws_subprotocols,omitempty"`
-	WSActivities              map[string]uint64 `json:"ws_activities,omitempty"`
-	WSHints                   map[string]uint64 `json:"ws_hints,omitempty"`
-	WSUploadBytes             uint64            `json:"ws_upload_bytes"`
-	WSDownloadBytes           uint64            `json:"ws_download_bytes"`
-	WSUploadFiller            uint64            `json:"ws_upload_filler"`
-	WSDownloadFiller          uint64            `json:"ws_download_filler"`
-	WSUploadUseful            uint64            `json:"ws_upload_useful"`
-	WSDownloadUseful          uint64            `json:"ws_download_useful"`
-	WSStartupMinUp            uint32            `json:"ws_startup_min_up"`
-	WSStartupMinDown          uint32            `json:"ws_startup_min_down"`
-	StartupCompleted          uint64            `json:"startup_completed"`
-	IdleHeartbeats            uint64            `json:"idle_heartbeats"`
-	ProgressHintOpportunities uint64            `json:"progress_hint_opportunities"`
-	ProgressHintPromotions    uint64            `json:"progress_hint_promotions"`
-	CreditHintOpportunities   uint64            `json:"credit_hint_opportunities"`
-	CreditHintPromotions      uint64            `json:"credit_hint_promotions"`
-	CellCapacities            map[string]uint64 `json:"cell_capacities,omitempty"`
-	IdleStarted               uint64            `json:"idle_started"`
-	IdleCompleted             uint64            `json:"idle_completed"`
-	IdleCancelled             uint64            `json:"idle_cancelled"`
-	WriteErrors               uint64            `json:"write_errors"`
-	Peers                     []mux.Stats       `json:"peers,omitempty"`
-	Requests                  map[string]uint64 `json:"requests"`
-	Protocols                 map[string]uint64 `json:"protocols"`
-	UploadBytes               uint64            `json:"upload_bytes"`
-	DownloadBytes             uint64            `json:"download_bytes"`
-	UploadFiller              uint64            `json:"upload_filler"`
-	DownloadFiller            uint64            `json:"download_filler"`
-	UploadUseful              uint64            `json:"upload_useful"`
-	DownloadUseful            uint64            `json:"download_useful"`
-	Opens                     uint64            `json:"opens"`
-	Rejected                  uint64            `json:"rejected"`
-	Connect                   uint64            `json:"connect"`
+	WSOpened         uint64            `json:"ws_opened"`
+	WSClosed         uint64            `json:"ws_closed"`
+	WSMessagesIn     uint64            `json:"ws_messages_in"`
+	WSMessagesOut    uint64            `json:"ws_messages_out"`
+	WSCellCapacities map[string]uint64 `json:"ws_cell_capacities,omitempty"`
+	WSSubprotocols   map[string]uint64 `json:"ws_subprotocols,omitempty"`
+	WSUploadBytes    uint64            `json:"ws_upload_bytes"`
+	WSDownloadBytes  uint64            `json:"ws_download_bytes"`
+	WSUploadFiller   uint64            `json:"ws_upload_filler"`
+	WSDownloadFiller uint64            `json:"ws_download_filler"`
+	WSUploadUseful   uint64            `json:"ws_upload_useful"`
+	WSDownloadUseful uint64            `json:"ws_download_useful"`
+	WSStartupMinUp   uint32            `json:"ws_startup_min_up"`
+	WSStartupMinDown uint32            `json:"ws_startup_min_down"`
+	StartupCompleted uint64            `json:"startup_completed"`
+	IdleHeartbeats   uint64            `json:"idle_heartbeats"`
+	CellCapacities   map[string]uint64 `json:"cell_capacities,omitempty"`
+	WriteErrors      uint64            `json:"write_errors"`
+	Peers            []mux.Stats       `json:"peers,omitempty"`
+	Requests         map[string]uint64 `json:"requests"`
+	Protocols        map[string]uint64 `json:"protocols"`
+	UploadBytes      uint64            `json:"upload_bytes"`
+	DownloadBytes    uint64            `json:"download_bytes"`
+	UploadFiller     uint64            `json:"upload_filler"`
+	DownloadFiller   uint64            `json:"download_filler"`
+	UploadUseful     uint64            `json:"upload_useful"`
+	DownloadUseful   uint64            `json:"download_useful"`
+	Opens            uint64            `json:"opens"`
+	Rejected         uint64            `json:"rejected"`
+	Connect          uint64            `json:"connect"`
 }
 
 type session struct {
@@ -94,11 +84,9 @@ type session struct {
 	ip             string
 	last           time.Time
 	authed         bool
-	appendMode     bool
 	up             uint32
 	down           uint32
 	peer           *mux.Peer
-	idle           bool
 	wake           chan struct{}
 	startupSteps   int
 	startupInvalid bool
@@ -109,8 +97,6 @@ type session struct {
 	ackSequence    uint32
 	wsStartupUp    uint32
 	wsStartupDown  uint32
-	wsPeerHint     cell.PressureHint
-	wsPeerActivity realtimeActivity
 }
 
 func (s *session) close() {
@@ -134,10 +120,8 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 	if t.MaxSessions == 0 {
 		t.MaxSessions = 128
 	}
-	if t.Profile != "" {
-		if _, ok := profiles[t.Profile]; !ok {
-			return errors.New("unknown application profile")
-		}
+	if t.Profile != "" && t.Profile != defaultProfile {
+		return errors.New("unsupported application profile")
 	}
 	if t.LegacyKey != nil || t.LegacyTargets != nil {
 		return errors.New("key and allowed_targets were removed; move forward_proxy inside naivefox_transport and configure basic_auth once for both transports")
@@ -260,7 +244,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	if _, err := rand.Read(token); err != nil {
 		return nil, err
 	}
-	s := &session{ip: ip, last: time.Now(), appendMode: t.AppendMode, wake: make(chan struct{}, 1)}
+	s := &session{ip: ip, last: time.Now(), wake: make(chan struct{}, 1)}
 	s.peer, err = mux.NewWithWindow(func(ctx context.Context, target string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(target)
 		if err != nil || host == "" || strings.ContainsAny(host, "\x00\r\n\t /?#@") || port == "" {
@@ -282,7 +266,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 			return nil, errors.New("unauthenticated stream")
 		}
 		return t.policy.DialContext(ctx, target)
-	}, t.appProfile().ReceiveWindow)
+	}, 512*1024)
 	if err != nil {
 		return nil, err
 	}
@@ -322,11 +306,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, isAsset := t.application.asset(path)
-	bulk := t.appProfile().Bulk && (path == "/api/sync/bulk" || (path == "/api/data/bulk" && !t.appProfile().BulkDuplex))
-	exchange := (t.appProfile().LiveDuplex && (path == "/api/exchange/interactive" || path == "/api/exchange/download" || path == "/api/exchange/upload" || path == "/api/exchange/mixed")) || (t.appProfile().InteractiveDuplex && path == "/api/exchange/interactive")
-	continuousPath := path == "/api/events/idle" || (path == "/api/data/interactive" && !t.appProfile().InteractiveDuplex) || path == "/api/data/download" || path == "/api/data/upload" || path == "/api/data/mixed"
-	carrier := path == "/api/sync" || path == "/api/sync/media" || path == "/api/action" || path == "/api/events" || path == "/api/events/brief" || path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/") || path == "/api/upload/chunk" || (t.appProfile().Continuous && continuousPath)
-	if !isAsset && !carrier && !exchange && !bulk {
+	carrier := path == "/api/sync" || path == "/api/events/brief" ||
+		path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/")
+	if !isAsset && !carrier {
 		return t.ForwardProxy.ServeHTTP(w, r, next)
 	}
 	methodLabel, pathLabel, protocolLabel := r.Method, path, r.Proto
@@ -362,11 +344,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			}
 			// The native client must reject a different profile before sending
 			// authentication or opening streams: receive windows are not negotiated.
-			w.Header().Set("X-App-Profile", t.profileName())
+			w.Header().Set("X-App-Profile", defaultProfile)
 			w.Header().Set("X-App-Auth", "basic")
-			if t.profileName() == defaultProfile && !t.AppendMode {
-				w.Header().Set("X-App-Realtime", "websocket-v1")
-			}
+			w.Header().Set("X-App-Realtime", "websocket-v1")
 		}
 		asset, ok := t.application.asset(path)
 		if !ok {
@@ -389,36 +369,9 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	w = observer
 	defer t.finishHTTP(s, observer, r)
-	if path == "/api/events/idle" {
-		if r.Method != "GET" {
-			t.reject(w)
-			return nil
-		}
-		t.mu.Lock()
-		t.stats.IdleStarted++
-		t.mu.Unlock()
-		ready, err := waitIdleEvent(r.Context(), s, 30*time.Second)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
-				t.mu.Lock()
-				t.stats.IdleCancelled++
-				t.mu.Unlock()
-			} else {
-				t.reject(w)
-			}
-			return nil
-		}
-		return t.finishIdle(w, s, ready)
-	}
-	if path == "/api/sync" || path == "/api/sync/media" || path == "/api/upload/chunk" || path == "/api/action" || exchange || path == "/api/sync/bulk" {
-		capacity := 4096
-		if path == "/api/sync/bulk" {
-			capacity = 16384
-		}
-		if path == "/api/upload/chunk" || path == "/api/exchange/upload" || path == "/api/exchange/mixed" {
-			capacity = 131072
-		}
-		if r.Method != "POST" || (path == "/api/action" && !t.appProfile().Commit) {
+	if path == "/api/sync" {
+		const capacity = 4096
+		if r.Method != "POST" {
 			t.reject(w)
 			return nil
 		}
@@ -426,17 +379,13 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			t.reject(w)
 			return nil
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, int64(2*capacity+1)))
+		body, err := io.ReadAll(io.LimitReader(r.Body, int64(capacity+1)))
 		sequence, frames, filler, decodeErr := cell.Decode(body)
 		used := 0
 		for _, f := range frames {
 			used += f.Size()
 		}
-		expected := capacity
-		if s.appendMode {
-			expected += used
-		}
-		if err != nil || decodeErr != nil || len(body) != expected || used > capacity-cell.Header {
+		if err != nil || decodeErr != nil || len(body) != capacity || used > capacity-cell.Header {
 			t.reject(w)
 			return nil
 		}
@@ -497,26 +446,6 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.stats.UploadUseful += useful
 		t.stats.Opens += opens
 		t.mu.Unlock()
-		bulkDuplex := t.appProfile().BulkDuplex && path == "/api/sync/bulk"
-		if t.appProfile().Duplex || path == "/api/action" || exchange || bulkDuplex {
-			down := 24576
-			if path == "/api/sync/media" {
-				down = t.appProfile().Down
-			}
-			if path == "/api/action" {
-				down = 4096
-			}
-			if exchange {
-				down = 8192
-				if path == "/api/exchange/download" || path == "/api/exchange/mixed" {
-					down = 65536
-				}
-			}
-			if bulkDuplex {
-				down = 262144
-			}
-			return t.downstream(w, s, down)
-		}
 		w.WriteHeader(204)
 		return nil
 	}
@@ -524,107 +453,14 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.reject(w)
 		return nil
 	}
-	capacity := 24576
-	if path == "/api/data/bulk" {
-		capacity = 262144
-	}
-	if path == "/api/events/brief" {
-		capacity = 8192
-	}
-	if path == "/api/events/state" {
-		capacity = 32768
-	}
-	if strings.HasPrefix(path, "/media/chunk/") {
-		capacity = t.appProfile().Down
-	}
-	if path == "/api/data/interactive" || path == "/api/data/upload" {
-		capacity = 8192
-	}
-	if path == "/api/data/download" || path == "/api/data/mixed" {
-		capacity = 65536
-	}
-	return t.downstream(w, s, capacity)
-}
-
-func (t *Transport) finishIdle(w http.ResponseWriter, s *session, ready bool) error {
-	if t.appProfile().IdleEvents && !ready {
-		w.WriteHeader(http.StatusNoContent)
-		t.mu.Lock()
-		t.stats.IdleHeartbeats++
-		t.stats.IdleCompleted++
-		t.mu.Unlock()
+	s.mu.Lock()
+	round := int(s.down)
+	s.mu.Unlock()
+	if round >= len(startupSlots) || path != startupPath(round) {
+		t.reject(w)
 		return nil
 	}
-	capacity := 512
-	if t.appProfile().IdleEvents {
-		capacity = 8192
-	}
-	err := t.downstream(w, s, capacity)
-	if err == nil {
-		t.mu.Lock()
-		t.stats.IdleCompleted++
-		t.mu.Unlock()
-	}
-	return err
-}
-
-func waitIdle(ctx context.Context, s *session, timeout time.Duration) error {
-	_, err := waitIdleEvent(ctx, s, timeout)
-	return err
-}
-
-func waitIdleEvent(ctx context.Context, s *session, timeout time.Duration) (bool, error) {
-	s.mu.Lock()
-	if s.idle {
-		s.mu.Unlock()
-		return false, errors.New("idle poll already active")
-	}
-	s.idle = true
-	up := s.up
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); s.idle = false; s.mu.Unlock() }()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for {
-		pressure := s.peer.Pressure()
-		s.mu.Lock()
-		changed := s.up != up
-		s.mu.Unlock()
-		if changed || pressure.Bytes > 0 || pressure.Controls > 0 {
-			return true, ctx.Err()
-		}
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-s.peer.Done():
-			return false, context.Canceled
-		case <-timer.C:
-			return false, nil
-		case <-s.peer.Changes():
-		case <-s.wake:
-		}
-	}
-}
-
-// A completed, substantially useful bulk cell may bridge one credit return.
-// Backlog alone must never keep a stalled receiver in an empty bulk loop.
-func downstreamState(pressure mux.Pressure, capacity int, useful uint64, preserve bool) (string, bool) {
-	opportunity := capacity == 262144 && useful >= 131072 && pressure.Bytes < 32768 && pressure.Queued >= 32768
-	if pressure.Bytes >= 32768 || (preserve && opportunity) {
-		return "download", opportunity
-	}
-	if pressure.Bytes > 0 || pressure.Controls > 0 {
-		return "interactive", opportunity
-	}
-	return "idle", opportunity
-}
-
-func progressHandoff(state string, pressure mux.Pressure, capacity int, useful uint64, enabled bool) (string, bool) {
-	opportunity := state != "download" && capacity == 262144 && useful >= 131072 && pressure.Readable > 0
-	if enabled && opportunity {
-		return "download", true
-	}
-	return state, opportunity
+	return t.downstream(w, s, startupSlots[round])
 }
 
 func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) error {
@@ -637,15 +473,7 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 			useful += uint64(len(f.Body))
 		}
 	}
-	base := capacity
-	if s.appendMode {
-		capacity += used
-	}
-	encode := cell.Encode
-	if t.appProfile().FillerOnly {
-		encode = cell.EncodeFillerOnly
-	}
-	body, err := encode(s.down, capacity, frames)
+	body, err := cell.Encode(s.down, capacity, frames)
 	s.down++
 	s.mu.Unlock()
 	if err != nil {
@@ -655,35 +483,11 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	t.stats.DownloadBytes += uint64(len(body))
 	t.stats.DownloadFiller += uint64(len(body) - cell.Header - used)
 	t.stats.DownloadUseful += useful
-	t.stats.CellCapacities[strconv.Itoa(base)]++
+	t.stats.CellCapacities[strconv.Itoa(capacity)]++
 	t.mu.Unlock()
-	if t.appProfile().Continuous {
-		pressure := s.peer.Pressure()
-		preserve := t.appProfile().Bulk && t.Profile != "continuous-bulk"
-		state, opportunity := downstreamState(pressure, base, useful, preserve)
-		var progress bool
-		state, progress = progressHandoff(state, pressure, base, useful, t.appProfile().ProgressHint)
-		if progress {
-			t.mu.Lock()
-			t.stats.ProgressHintOpportunities++
-			if t.appProfile().ProgressHint {
-				t.stats.ProgressHintPromotions++
-			}
-			t.mu.Unlock()
-		}
-		if opportunity {
-			t.mu.Lock()
-			t.stats.CreditHintOpportunities++
-			if preserve {
-				t.stats.CreditHintPromotions++
-			}
-			t.mu.Unlock()
-		}
-		w.Header().Set("X-App-State", state)
-	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	w.Header().Set("X-App-Capacity", strconv.Itoa(base))
+	w.Header().Set("X-App-Capacity", strconv.Itoa(capacity))
 	_, err = w.Write(body)
 	if err != nil {
 		t.mu.Lock()

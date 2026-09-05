@@ -128,21 +128,6 @@ func (f *realtimeFixture) send(conn *websocket.Conn, capacity int, frames []cell
 	return sequence
 }
 
-func (f *realtimeFixture) sendRealtime(conn *websocket.Conn, capacity int, hint cell.PressureHint, frames []cell.Frame) uint32 {
-	f.t.Helper()
-	sequence := f.up
-	body, err := cell.EncodeRealtime(sequence, capacity, hint, frames)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := conn.WriteMessage(websocket.BinaryMessage, body); err != nil {
-		f.t.Fatal(err)
-	}
-	f.up++
-	return sequence
-}
-
 func (f *realtimeFixture) receive(conn *websocket.Conn) []cell.Frame {
 	f.t.Helper()
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -150,7 +135,7 @@ func (f *realtimeFixture) receive(conn *websocket.Conn) []cell.Frame {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if kind != websocket.BinaryMessage || (len(body) != 512 && len(body) != 65536 && len(body) != 262144) {
+	if kind != websocket.BinaryMessage || (len(body) != 512 && len(body) != 8192 && len(body) != 65536 && len(body) != 262144) {
 		f.t.Fatal("unshaped websocket message")
 	}
 	sequence, frames, _, err := cell.Decode(body)
@@ -166,8 +151,7 @@ func TestRealtimeRequiresCompleteOrderedBootstrap(t *testing.T) {
 		f := newRealtimeFixture(t)
 		if wrong {
 			f.request("GET", "/api/events/brief", nil)
-			f.down++
-			f.bootstrap(true, nil)
+
 		}
 		conn, response, err := f.dial()
 		if conn != nil {
@@ -179,115 +163,25 @@ func TestRealtimeRequiresCompleteOrderedBootstrap(t *testing.T) {
 	}
 }
 
-func TestRealtimeAsymmetricDirectionalCapacities(t *testing.T) {
-	clientCases := []struct {
-		local, peer cell.PressureHint
-		activity    realtimeActivity
-		capacity    int
-	}{
-		{cell.PressureIdle, cell.PressureIdle, activityIdle, 512},
-		{cell.PressureInteractive, cell.PressureIdle, activityInteractive, 4096},
-		{cell.PressureBulk, cell.PressureIdle, activityUpload, 131072},
-		{cell.PressureIdle, cell.PressureBulk, activityDownload, 16384},
-		{cell.PressureBulk, cell.PressureBulk, activityMixed, 131072},
-	}
-	for _, tc := range clientCases {
-		activity := clientRealtimeActivity(tc.local, tc.peer)
-		if activity != tc.activity || realtimeUpCapacity(activity) != tc.capacity {
-			t.Fatalf("client capacity: local=%d peer=%d activity=%s capacity=%d", tc.local, tc.peer, activity, realtimeUpCapacity(activity))
-		}
-	}
-	serverCases := []struct {
-		local    cell.PressureHint
-		peer     realtimeActivity
-		activity realtimeActivity
-		capacity int
-	}{
-		{cell.PressureIdle, activityIdle, activityIdle, 512},
-		{cell.PressureInteractive, activityIdle, activityInteractive, 8192},
-		{cell.PressureBulk, activityIdle, activityDownload, 262144},
-		{cell.PressureIdle, activityUpload, activityUpload, 8192},
-		{cell.PressureBulk, activityUpload, activityMixed, 65536},
-		{cell.PressureIdle, activityDownload, activityDownload, 262144},
-	}
-	for _, tc := range serverCases {
-		activity := serverRealtimeActivity(tc.local, tc.peer)
-		if activity != tc.activity || realtimeDownCapacity(activity) != tc.capacity {
-			t.Fatalf("server capacity: local=%d peer=%s activity=%s capacity=%d", tc.local, tc.peer, activity, realtimeDownCapacity(activity))
-		}
-	}
-}
-
-func TestRealtimeAsymmetricNegotiationAndHint(t *testing.T) {
-	f := newRealtimeFixture(t)
-	f.bootstrap(true, nil)
-	conn, _, err := f.dialProtocol(realtimeAsymProtocol)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if conn.Subprotocol() != realtimeAsymProtocol || len(conn.Subprotocol()) != len(realtimeProtocol) {
-		t.Fatal("asymmetric subprotocol")
-	}
-	target, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer target.Close()
-	accepted := make(chan net.Conn, 1)
-	go func() {
-		connection, err := target.Accept()
+func TestRealtimeRejectsRetiredProtocols(t *testing.T) {
+	for _, protocol := range []string{"nfc1.hybrid.v1", "nfc1.hybrid.a1"} {
+		f := newRealtimeFixture(t)
+		f.bootstrap(true, nil)
+		conn, response, err := f.dialProtocol(protocol)
 		if err == nil {
-			accepted <- connection
+			conn.Close()
+			t.Fatal("retired protocol accepted")
 		}
-	}()
-	f.sendRealtime(conn, 4096, cell.PressureBulk, []cell.Frame{{Kind: cell.Open, Stream: 1, Body: []byte(target.Addr().String())}})
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	kind, body, err := conn.ReadMessage()
-	if err != nil || kind != websocket.BinaryMessage || len(body) != 512 {
-		t.Fatalf("asymmetric control response: bytes=%d error=%v", len(body), err)
-	}
-	sequence, frames, _, hint, err := cell.DecodeRealtime(body)
-	if err != nil || sequence != f.down || hint > cell.PressureBulk || len(frames) == 0 {
-		t.Fatal("asymmetric realtime response")
-	}
-	f.down++
-	select {
-	case targetConnection := <-accepted:
-		defer targetConnection.Close()
-	case <-time.After(5 * time.Second):
-		t.Fatal("asymmetric target was not opened")
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		f.module.mu.Lock()
-		ready := f.module.stats.WSSubprotocols[realtimeAsymProtocol] == 1 &&
-			f.module.stats.WSCellCapacities["in 4096"] == 1 &&
-			f.module.stats.WSCellCapacities["out 512"] >= 1 &&
-			f.module.stats.WSActivities["out interactive"] >= 1 &&
-			f.module.stats.WSHints["in 2"] == 1
-		f.module.mu.Unlock()
-		if ready {
-			break
+		if response == nil || response.StatusCode != 400 {
+			t.Fatal("retired protocol did not fail closed")
 		}
-		if time.Now().After(deadline) {
-			f.module.mu.Lock()
-			t.Fatalf("asymmetric telemetry did not settle: subprotocol=%d in=%d out=%d activity=%d hint=%d",
-				f.module.stats.WSSubprotocols[realtimeAsymProtocol],
-				f.module.stats.WSCellCapacities["in 4096"],
-				f.module.stats.WSCellCapacities["out 512"],
-				f.module.stats.WSActivities["out interactive"],
-				f.module.stats.WSHints["in 2"])
-			f.module.mu.Unlock()
-		}
-		time.Sleep(time.Millisecond)
 	}
 }
 
-func TestRealtimeAsymmetricRejectsGenericCapacity(t *testing.T) {
+func TestRealtimeRejectsUnsupportedCapacity(t *testing.T) {
 	f := newRealtimeFixture(t)
 	f.bootstrap(true, nil)
-	conn, _, err := f.dialProtocol(realtimeAsymProtocol)
+	conn, _, err := f.dial()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +277,7 @@ func TestRealtimeStreamSurvivesBootstrapAndHalfClose(t *testing.T) {
 		for credit < uint32(n) {
 			consume(f.receive(conn))
 		}
-		f.send(conn, 65536, []cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: uint32(offset), Body: payload[offset : offset+n]}})
+		f.send(conn, 131072, []cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: uint32(offset), Body: payload[offset : offset+n]}})
 		credit -= uint32(n)
 		offset += n
 	}
@@ -418,7 +312,7 @@ func TestRealtimeRejectsInvalidCellsAndAnonymousProxyFrames(t *testing.T) {
 		{"anonymous-ack", false, 512, websocket.BinaryMessage, &cell.Frame{Kind: cell.Ack, Sequence: 20}, 20},
 		{"re-auth", true, 512, websocket.BinaryMessage, &cell.Frame{Kind: cell.Auth, Body: []byte(testAuthorization)}, 20},
 		{"client-ack", true, 512, websocket.BinaryMessage, &cell.Frame{Kind: cell.Ack, Sequence: 20}, 20},
-		{"capacity", true, 4096, websocket.BinaryMessage, nil, 20},
+		{"capacity", true, 65536, websocket.BinaryMessage, nil, 20},
 		{"replay", true, 512, websocket.BinaryMessage, nil, 19},
 		{"text", true, 512, websocket.TextMessage, nil, 20},
 	}
@@ -492,7 +386,7 @@ func TestRealtimeIdleAccountingExcludesAcknowledgements(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		module.writeRealtime(ctx, conn, s, 10*time.Millisecond, false)
+		module.writeRealtime(ctx, conn, s, 10*time.Millisecond)
 		close(writerDone)
 	}))
 	defer server.Close()

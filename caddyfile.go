@@ -66,11 +66,6 @@ func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.AllArgs(&t.StatsPath) {
 					return d.ArgErr()
 				}
-			case "append_mode":
-				if d.NextArg() {
-					return d.ArgErr()
-				}
-				t.AppendMode = true
 			default:
 				return d.Errf("unknown naivefox_transport option %q", name)
 			}

@@ -2,11 +2,9 @@
 
 This repository maintains the Caddy `http.handlers.naivefox_transport` module
 used by [NaiveFox](https://github.com/incident201/naivefox)'s opt-in **no-connect**
-transport. Ordinary HTTPS GET/POST requests carry bounded, multiplexed TCP data.
-The original `no-connect` mode has no outer CONNECT or WebSocket. The explicit
-`no-connect-hybrid` mode completes the same page and API startup, then carries
-NFC1 over one shaped WebSocket. TLS and HTTP remain the responsibility of Caddy
-and the client network stack.
+transport. A fixed ordinary HTTPS startup carries bounded NFC1 cells, then
+one shaped native WebSocket per carrier carries multiplexed TCP streams.
+TLS and HTTP remain the responsibility of Caddy and the client network stack.
 
 NaiveFox's default **classic** transport uses the Naive forwardproxy module.
 One Caddy binary contains both modules. `naivefox_transport` serves its
@@ -26,7 +24,8 @@ The client keeps its existing proxy URL and changes only `transport`:
 
 `classic` remains the default. `--transport no-connect` or `--transport classic`
 overrides JSON. Percent-encode reserved characters in URL credentials. Use
-`quic://` for H3 (UDP 443 must be reachable), or `https://` for H2.
+`quic://` for H3 startup or `https://` for H2 startup; no-connect also
+requires TCP for its persistent WebSocket.
 
 ## Ready Caddy for Linux x86_64
 
@@ -61,50 +60,39 @@ This code began as an application-carrier experiment. Its history, optional
 browser/loopback bridge, external gallery template, and experimental profiles
 remain here for reproducibility. The template is a server deployment asset and
 is never linked into the native lean NaiveFox client. The selected profile is
-`continuous-bulk-pipeline`: other experimental
+`native-stream-v1`: other experimental
 profiles are not interchangeable with the native client. Historical bandwidth,
 timing, and browser results are in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 Those results do not establish the camouflage quality of a native client.
 
-## Optional hybrid client
+## Native no-connect client
 
-Select `"transport":"no-connect-hybrid"` in a matching native client, or pass
-`--transport no-connect-hybrid`. The same `continuous-bulk-pipeline` server
-profile supports both clients; existing GET/POST behavior is unchanged.
-After assets and all twenty startup API pairs finish, the hybrid opens
-`/api/realtime` with WebSocket subprotocol `nfc1.hybrid.v1`. It preserves the
-session, authenticated mux streams, sequence numbers and 512-KiB stream credit.
+NaiveFox exposes two transports: `classic` (the default) and `no-connect`.
+Select `"transport":"no-connect"` or `--transport no-connect` in the matching
+client. No-connect completes the root, six assets and twenty ordered HTTP
+POST/GET pairs, then uses one native WebSocket per carrier with subprotocol
+`nfc1.stream.v1`. The profile is `native-stream-v1`; omit `profile` or use
+that exact value in Caddy configuration.
 
-The current Firefox WebSocket path uses a new TLS/TCP connection with an HTTP/1.1
-upgrade, including after an H3 startup. Consequently this explicit hybrid is a
-mixed HTTP protocol mode, not an H3-only transport. Caddy must permit `h1` as
-well as the selected startup protocol. There is no automatic fallback to this
-mode from `no-connect`, and WebSocket failure aborts the session without replay.
+The fixed startup uses H2 or H3 as selected by the client URI. The persistent
+phase uses HTTP/1.1 WSS/TCP after either startup, so H3 no-connect needs TCP
+as well as UDP access. Classic remains ordinary Naive CONNECT, including
+strict H3/QUIC. Both transports share the existing credentials and policy.
 
-Binary message capacities are 64 KiB for activity, 256 KiB for bulk, and 512
-bytes for controls or idle heartbeats. Fresh random filler fills unused space.
-One bounded writer coalesces activity for at most 2 ms; idle heartbeats occur
-after 25 seconds. Further local connections reuse the WebSocket until the
-carrier's existing 32-stream limit requires another session.
+Capacity follows actual local sendable data within the 512-KiB stream window.
+The client uses 512-byte controls and 4/16/128-KiB data messages; the server
+uses 512-byte controls and 8/64/256-KiB data messages. Partial payloads coalesce
+for 2 ms; full selected capacities and controls dispatch immediately. The
+server encodes each cell once. Heartbeats use 512 bytes after 25 seconds.
+Each carrier supports 32 concurrent logical streams; additional carriers
+provide further capacity.
 
-The separate experimental selector `no-connect-hybrid-asymmetric` offers the
-equal-length subprotocol `nfc1.hybrid.a1`. It carries a residual pressure hint
-in the reserved NFC1 header and retains directional capacity sets:
-4/16/128 KiB upstream and 8/64/256 KiB downstream, plus 512-byte controls.
-The current screen grants larger messages only when enough local data is
-sendable within stream credit; peer pressure alone cannot enlarge a grant.
-See the protocol for the exact thresholds. Idle remains 512 bytes. The server retains
-`nfc1.hybrid.v1` unchanged so generic and asymmetric clients can be compared on
-one binary. Neither hybrid mode is selected implicitly.
-
-The separate `lab/browser-application` fixture retains the anonymous
-browser-side carrier lifecycle for protocol tests. It is not part of the
-production template or release archive. Anonymous WebSockets accept only empty
-cells and cannot open targets; proxy authentication must already have succeeded
-in startup AUTH. See
-[the wire contract](docs/PROTOCOL.md#optional-realtime-transition) for bounds,
-acknowledgements and failure handling. Functional tests do not establish a
-performance or camouflage improvement.
+The old finite HTTP carrier, generic hybrid, asymmetric selector names,
+pressure hints and laboratory browser/bridge implementations are retired.
+Upgrade client and server together. There are no aliases for old wire profiles
+or subprotocols. Stream sequences, delivery-based credits, half-close and
+cumulative FIN acknowledgements are preserved. A failed carrier cannot replay,
+reconnect or resume HTTP work. See [the wire contract](docs/PROTOCOL.md).
 
 ## Build and test
 
@@ -113,13 +101,13 @@ on PATH, then run:
 
 ```sh
 bash tools/go.sh go test -race ./...
-node --test test/*.test.js
+node --check template/assets/app.js
 bash tools/build.sh
 ./artifacts/bin/caddy list-modules
 NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run 'TestCombinedCaddy(TLS|RejectsInvalidExternalApplication)' -count=1 .
 ```
 
-`tools/build.sh` builds the optional laboratory bridge and a single Caddy binary
+`tools/build.sh` builds a single Caddy binary
 containing both `http.handlers.forward_proxy` and
 `http.handlers.naivefox_transport`. It does not build Firefox. Its optional
 argument is an absolute output directory. Build output, temporary xcaddy work,
@@ -271,7 +259,7 @@ package upgrades do not overwrite the custom binary under `/usr/local/bin`.
 To roll back, restore the saved Caddyfile, remove only these two executable
 overrides, reload systemd, and restart the service with its original executable.
 
-The native client requires `X-App-Profile: continuous-bulk-pipeline` and
+The native client requires `X-App-Profile: native-stream-v1` and
 `X-App-Auth: basic` on the initial `GET /` response before it sends AUTH.
 These headers are emitted only for
 the root handshake, report the resolved profile even when configuration omits
@@ -299,7 +287,7 @@ For migration, upgrade both server and client. Remove server `key` and
 even when empty; they are never ignored. Old key-based servers lack the new
 Basic handshake and cannot accidentally receive a new client's credentials.
 
-The omitted `profile` resolves to `continuous-bulk-pipeline`, with 512 KiB of
+The omitted `profile` resolves to `native-stream-v1`, with 512 KiB of
 receive credit per stream. An explicit profile must match the client. The
 experimental `append_mode` and other profiles are for historical tests, not
 native no-connect configuration. `stats_path` optionally writes counters on
@@ -319,21 +307,15 @@ unauthenticated visitor is replaced; authenticated sessions are never evicted.
 If all slots are authenticated, new sessions are rejected until capacity is free.
 There are 32 streams per session; clients can use additional sessions for more
 concurrent streams. Queues and credit remain bounded. Sessions expire after
-two minutes without requests; active transfers and 30-second idle polls refresh
-that timer. There is no fixed lifetime limit on active sessions. Byte offsets
+two minutes without traffic; active transfers and 25-second WS heartbeats
+refresh that timer. There is no fixed lifetime limit on active sessions. Byte offsets
 wrap modulo 2^32, so a stream is not limited to 4 GiB. Cell sequences and stream
 IDs do not wrap/reuse within a session. There is no reconnect or resume.
 
-The supported native contract is `continuous-bulk-pipeline` with `append_mode`
-disabled. Historical profile variants and the optional browser/bridge worker
-remain research tools, outside that native contract. Tests cover byte-window
-backpressure, small-frame coalescing, bounded scheduler and metric storage,
-stalled-upload isolation, cancellation, half-close and dual-transport routing.
-
-Deployment requires operator-managed TLS, private credentials and appropriate
-network/resource limits. The tests do not establish resistance to every denial-of-service
-attack, performance parity, or traffic indistinguishability from web browsing.
-Missing credentials never enable anonymous proxy access.
+The supported native contract is `native-stream-v1`. Retired finite profiles
+and browser/bridge implementations are available only in Git history.
+Tests cover credit, authentication/policy, framing, startup retirement,
+WebSocket transfer, half-close, expiry, cancellation and TLS cohosting.
 
 ## Maintenance
 

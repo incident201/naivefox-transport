@@ -1,109 +1,16 @@
 package transport
 
-import (
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestDefaultIsMeasuredContinuousPipeline(t *testing.T) {
-	implicit, _ := json.Marshal((&Transport{ApplicationRoot: testApplicationRoot(t)}).appProfile())
-	explicit, _ := json.Marshal(profiles["continuous-bulk-pipeline"])
-	if defaultProfile != "continuous-bulk-pipeline" || string(implicit) != string(explicit) {
-		t.Fatal("experimental default mismatch")
+func TestOnlyCurrentProfileAccepted(t *testing.T) {
+	for _, profile := range []string{"v1", "continuous-v1", "continuous-bulk-pipeline"} {
+		handler := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: profile, ForwardProxy: testForwardProxy()}
+		if err := handler.Provision(testCaddyContext(t)); err == nil {
+			handler.Cleanup()
+			t.Fatal("retired profile accepted")
+		}
 	}
-	p := (&Transport{ApplicationRoot: testApplicationRoot(t)}).appProfile()
-	if !p.Continuous || !p.PairBulk || !p.PipelineBulk || p.ReceiveWindow != 524288 || p.IdleEvents || p.InteractiveDuplex || p.FillerOnly {
-		t.Fatal("default includes an unselected variant")
-	}
-}
-
-// Freeze the previously measured parameters while replacing positional profile
-// literals with named inheritance. New profiles are deliberately outside this set.
-func TestPreviouslyMeasuredProfilesFrozen(t *testing.T) {
-	names := strings.Fields("v1 duplex-v1 compact compact-sync compact-sync20 compact-fast20 staged staged-fast staged-fast20 staged-stream20 staged-commit20 continuous-v1 continuous-sync continuous-sync2 continuous-bulk continuous-bulk-ready continuous-bulk-frames continuous-bulk-duplex continuous-bulk-interactive1 continuous-bulk-upload1")
-	frozen := make(map[string]appProfile)
-	for _, name := range names {
-		frozen[name] = profiles[name]
-	}
-	body, err := json.Marshal(frozen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := fmt.Sprintf("%x", sha256.Sum256(body))
-	if got != "52e73811661919f765e75c444927a42abf28e383a50b58068f2b1dd9350372da" {
-		t.Fatal(got)
-	}
-}
-
-func TestWindowProfileChangesOnlyCredit(t *testing.T) {
-	got := profiles["continuous-bulk-window512"]
-	want := profiles["continuous-bulk-duplex"]
-	if got.ReceiveWindow != 524288 || want.ReceiveWindow != 0 {
-		t.Fatal("window")
-	}
-	got.ReceiveWindow = 0
-	a, _ := json.Marshal(got)
-	b, _ := json.Marshal(want)
-	if string(a) != string(b) {
-		t.Fatal("confounded profile")
-	}
-}
-
-func TestFillerProfileChangesOnlyEncoder(t *testing.T) {
-	got := profiles["continuous-bulk-filler"]
-	want := profiles["continuous-bulk-duplex"]
-	if !got.FillerOnly || want.FillerOnly {
-		t.Fatal("encoder")
-	}
-	got.FillerOnly = false
-	a, _ := json.Marshal(got)
-	b, _ := json.Marshal(want)
-	if string(a) != string(b) {
-		t.Fatal("confounded profile")
-	}
-}
-
-func TestPairProfilesIsolateOverlap(t *testing.T) {
-	got := profiles["continuous-bulk-pipeline"]
-	want := profiles["continuous-bulk-pair"]
-	if !got.PipelineBulk || want.PipelineBulk || !got.PairBulk || got.ReceiveWindow != 524288 || got.FillerOnly || got.ProgressHint {
-		t.Fatal("pair controls")
-	}
-	got.PipelineBulk = false
-	a, _ := json.Marshal(got)
-	b, _ := json.Marshal(want)
-	if string(a) != string(b) {
-		t.Fatal("confounded overlap")
-	}
-}
-
-func TestPipelineEventCompositionChangesOnlyIdle(t *testing.T) {
-	got := profiles["continuous-bulk-pipeline-events"]
-	want := profiles["continuous-bulk-pipeline"]
-	if !got.IdleEvents || want.IdleEvents {
-		t.Fatal("idle policy")
-	}
-	got.IdleEvents = false
-	a, _ := json.Marshal(got)
-	b, _ := json.Marshal(want)
-	if string(a) != string(b) {
-		t.Fatal("confounded composition")
-	}
-}
-
-func TestInteractiveCompositionKeepsOtherStates(t *testing.T) {
-	got := profiles["continuous-bulk-pipeline-interactive"]
-	want := profiles["continuous-bulk-pipeline"]
-	if !got.InteractiveDuplex || want.InteractiveDuplex {
-		t.Fatal("interactive policy")
-	}
-	got.InteractiveDuplex = false
-	a, _ := json.Marshal(got)
-	b, _ := json.Marshal(want)
-	if string(a) != string(b) {
-		t.Fatal("confounded interactive profile")
+	if len(startupSlots) != 20 {
+		t.Fatal("startup graph changed")
 	}
 }

@@ -28,8 +28,8 @@ jobs:
           node-version: '24'
       - name: Go race tests
         run: bash tools/go.sh go test -race ./...
-      - name: Browser protocol tests
-        run: node --test test/*.test.js
+      - name: Check external application script
+        run: node --check template/assets/app.js
       - name: Build both Caddy modules
         run: |
           GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6

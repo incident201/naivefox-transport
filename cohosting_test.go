@@ -239,58 +239,6 @@ func TestCombinedCaddyTLS(t *testing.T) {
 			t.Fatalf("no-connect upload status: %d", response.StatusCode)
 		}
 	}
-	upload(0, []cell.Frame{{Kind: cell.Auth, Body: []byte(testAuthorization)}, {Kind: cell.Open, Stream: 1, Body: []byte(target.Addr().String())}})
-	var sequence uint32
-	downloadUntil := func(done func([]cell.Frame) bool) {
-		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			response, err := client.Get(origin + "/api/data/interactive")
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, readErr := io.ReadAll(response.Body)
-			response.Body.Close()
-			seq, frames, _, decodeErr := cell.Decode(body)
-			if readErr != nil || decodeErr != nil || response.StatusCode != 200 || len(body) != 8192 || response.Header.Get("X-App-Capacity") != "8192" || seq != sequence {
-				t.Fatalf("no-connect response: status=%d seq=%d expected=%d read=%v decode=%v", response.StatusCode, seq, sequence, readErr, decodeErr)
-			}
-			sequence++
-			if done(frames) {
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-		t.Fatal("no-connect target did not reply")
-	}
-	downloadUntil(func(frames []cell.Frame) bool {
-		for _, frame := range frames {
-			if frame.Kind == cell.Opened && frame.Stream == 1 {
-				return true
-			}
-		}
-		return false
-	})
-	message := []byte("native no-connect through the same Caddy")
-	upload(1, []cell.Frame{{Kind: cell.Data, Stream: 1, Body: message}})
-	var echoed []byte
-	downloadUntil(func(frames []cell.Frame) bool {
-		for _, frame := range frames {
-			if frame.Kind == cell.Data && frame.Stream == 1 {
-				if frame.Sequence != uint32(len(echoed)) {
-					t.Fatal("echo byte sequence")
-				}
-				echoed = append(echoed, frame.Body...)
-			}
-		}
-		return len(echoed) >= len(message)
-	})
-	if !bytes.Equal(echoed, message) {
-		t.Fatal("no-connect echo mismatch")
-	}
-	checkClassic("classic remains connected")
-	checkClassicH2("classic h2 remains connected")
-
 	client.Jar, _ = cookiejar.New(nil)
 	response, err := client.Get(origin + "/")
 	if err != nil {
@@ -315,7 +263,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		response.Body.Close()
 		sequence, _, _, decodeErr := cell.Decode(body)
 		if response.ProtoMajor != 2 || response.StatusCode != 200 || readErr != nil || decodeErr != nil || sequence != uint32(round) {
-			t.Fatal("hybrid H2 bootstrap")
+			t.Fatal("no-connect H2 bootstrap")
 		}
 	}
 	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: roots}, Jar: client.Jar, Subprotocols: []string{realtimeProtocol}}
@@ -343,8 +291,49 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	if err != nil || sequence != 20 || len(frames) == 0 || frames[0].Kind != cell.Ack || frames[0].Sequence != 20 {
 		t.Fatal("WebSocket NFC1 acknowledgement")
 	}
-	checkClassic("classic remains connected through hybrid")
-	checkClassicH2("classic h2 remains connected through hybrid")
+	message := []byte("no-connect WebSocket through the same Caddy")
+	body, err = cell.Encode(21, 4096, []cell.Frame{
+		{Kind: cell.Data, Stream: 1, Body: message},
+		{Kind: cell.Fin, Stream: 1, Sequence: uint32(len(message))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.WriteMessage(websocket.BinaryMessage, body); err != nil {
+		t.Fatal(err)
+	}
+	var echoed []byte
+	down, finished := uint32(21), false
+	for !finished {
+		_, body, err = ws.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sequence, frames, _, err = cell.Decode(body)
+		if err != nil || sequence != down {
+			t.Fatal("WebSocket cell sequence")
+		}
+		down++
+		for _, frame := range frames {
+			if frame.Kind == cell.Data {
+				if frame.Sequence != uint32(len(echoed)) {
+					t.Fatal("WebSocket byte sequence")
+				}
+				echoed = append(echoed, frame.Body...)
+			}
+			if frame.Kind == cell.Fin {
+				if frame.Sequence != uint32(len(echoed)) {
+					t.Fatal("WebSocket FIN")
+				}
+				finished = true
+			}
+		}
+	}
+	if !bytes.Equal(echoed, message) {
+		t.Fatal("WebSocket payload mismatch")
+	}
+	checkClassic("classic remains connected through no-connect")
+	checkClassicH2("classic h2 remains connected through no-connect")
 }
 
 func TestCombinedCaddyRejectsInvalidExternalApplication(t *testing.T) {
