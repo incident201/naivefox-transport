@@ -21,6 +21,7 @@ import (
 	"github.com/caddyserver/forwardproxy"
 	"github.com/incident201/naivefox-transport/internal/cell"
 	"github.com/incident201/naivefox-transport/internal/mux"
+	"go.uber.org/zap"
 )
 
 func init() { caddy.RegisterModule(Transport{}) }
@@ -134,6 +135,14 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 		application.close()
 		return err
 	}
+	var retainedBytes uint64
+	for _, asset := range application.assets {
+		retainedBytes += uint64(len(asset.body))
+	}
+	ctx.Logger().Info("loaded public site",
+		zap.Int("startup_resources", len(application.resources)),
+		zap.Uint64("bootstrap_body_bytes", application.bodyBytes),
+		zap.Uint64("retained_body_bytes", retainedBytes))
 	t.application = application
 	t.sessions = make(map[string]*session)
 	t.stats = counters{Requests: make(map[string]uint64), Protocols: make(map[string]uint64), CellCapacities: make(map[string]uint64)}
@@ -334,6 +343,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if isAsset {
+		w.Header().Set("X-App-Site", t.application.identity)
 		if path != "/" {
 			w.Header().Set("Cache-Control", "public, max-age=3600")
 		}

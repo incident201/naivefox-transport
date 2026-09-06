@@ -73,19 +73,19 @@ jobs:
             tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
               -C template -cf - . | gzip -n
           }
-          make_template_archive > dist/naivefox-application-template-v1.tar.gz
-          make_template_archive > dist/naivefox-application-template-v1.second.tar.gz
-          cmp dist/naivefox-application-template-v1.tar.gz dist/naivefox-application-template-v1.second.tar.gz
-          rm dist/naivefox-application-template-v1.second.tar.gz
-          (cd dist && sha256sum naivefox-application-template-v1.tar.gz > naivefox-application-template-v1.tar.gz.sha256)
+          make_template_archive > dist/naivefox-application-template-v2.tar.gz
+          make_template_archive > dist/naivefox-application-template-v2.second.tar.gz
+          cmp dist/naivefox-application-template-v2.tar.gz dist/naivefox-application-template-v2.second.tar.gz
+          rm dist/naivefox-application-template-v2.second.tar.gz
+          (cd dist && sha256sum naivefox-application-template-v2.tar.gz > naivefox-application-template-v2.tar.gz.sha256)
           mkdir dist/template-check
-          tar -xzf dist/naivefox-application-template-v1.tar.gz -C dist/template-check
+          tar -xzf dist/naivefox-application-template-v2.tar.gz -C dist/template-check
           diff -qr template dist/template-check
           rm -rf dist/template-check
           python3 - <<'PY'
           import hashlib, json, os, pathlib, subprocess
           binary = pathlib.Path('dist/caddy-linux-amd64')
-          template = pathlib.Path('dist/naivefox-application-template-v1.tar.gz')
+          template = pathlib.Path('dist/naivefox-application-template-v2.tar.gz')
           build_info = subprocess.check_output(['go', 'version', '-m', str(binary)], text=True).splitlines()
           expected_proxy = ['=>', 'github.com/klzgrad/forwardproxy', 'v0.0.0-20250118002110-d62c80d3dd2c']
           assert any(line.split()[:3] == expected_proxy for line in build_info), 'release must use the pinned, unchanged ordinary forwardproxy'
@@ -102,7 +102,7 @@ jobs:
               'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
               'application_template': template.name,
               'application_template_sha256': hashlib.sha256(template.read_bytes()).hexdigest(),
-              'application_template_contract': 'naivefox-application-v1',
+              'application_template_contract': 'naivefox-application-v2',
               'application_template_files': {
                   str(path.relative_to('template')): hashlib.sha256(path.read_bytes()).hexdigest()
                   for path in sorted(pathlib.Path('template').rglob('*')) if path.is_file()
@@ -138,7 +138,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check caddy-linux-amd64.sha256)
-          (cd dist && sha256sum --check naivefox-application-template-v1.tar.gz.sha256)
+          (cd dist && sha256sum --check naivefox-application-template-v2.tar.gz.sha256)
           cat > release-notes.md <<EOF
           Caddy 2.11.2 for Linux x86_64 with both forward_proxy and naivefox_transport.
 
@@ -146,11 +146,13 @@ jobs:
 
           Classic and no-connect cohosting requires both the hostless :443 site address and the named proxy hostname shown in the README. A hostname-only route cannot receive classic CONNECT requests whose authority names the destination.
 
-          Set application_root to one absolute directory containing the complete public site: index.html, the six required assets, and all additional pages, scripts, fonts, images and downloads. No separate root or file_server directive is needed. The seven required files retain their transport size/format contract and are served from memory; extras are read from disk on GET/HEAD. Reload after changing required files or replacing the root directory. Additional file changes do not require reload. Missing or invalid required files reject validation; there is no built-in fallback site.
+          Set application_root to one absolute directory containing the complete public site. The server derives startup resources from index.html and serves their actual bytes from an immutable memory snapshot. There are no compulsory CSS/JS/image filenames, resource counts, manifest files or padding sizes. Other files remain available from disk on GET/HEAD.
 
-          See the [directory layout and complete Caddyfile](https://github.com/$GH_REPO/blob/$SOURCE_SHA/README.md#site-directory-and-caddyfile). When upgrading a split-directory setup, move the extra public files into application_root at their existing relative paths and remove the separate site root/file_server configuration. This site-layout change requires the updated server binary, not a client update.
+          The native client loads every distinct supported directly declared resource, at most six at a time, without enabling caching or crawling CSS/JavaScript dependencies. Site size is the author's choice; large directly declared files increase traffic for every new carrier and server snapshot memory. Reload after changing the root or a selected file. Invalid or incomplete sites reject validation.
 
-          Classic remains the default. Current no-connect uses native-stream-v1 startup followed by nfc1.stream.v1 WebSocket messages. Only migrations from retired finite or hybrid/asymmetric transports require upgrading both client and server.
+          See the [site requirements and size recommendations](https://github.com/$GH_REPO/blob/$SOURCE_SHA/docs/SITE.md) and [complete Caddyfile](https://github.com/$GH_REPO/blob/$SOURCE_SHA/README.md#site-directory-and-caddyfile).
+
+          Upgrade both NaiveFox and this server for native-stream-v2. Older native-stream-v1 peers fail closed. The twenty API pairs, NFC1 stream framing and nfc1.stream.v1 WebSocket subprotocol are unchanged. Classic remains the default and uses the same credentials and destination policy.
 
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 
@@ -160,8 +162,8 @@ jobs:
           EOF
           gh release create "$RELEASE_TAG" \
             dist/caddy-linux-amd64 dist/caddy-linux-amd64.sha256 \
-            dist/naivefox-application-template-v1.tar.gz \
-            dist/naivefox-application-template-v1.tar.gz.sha256 \
+            dist/naivefox-application-template-v2.tar.gz \
+            dist/naivefox-application-template-v2.tar.gz.sha256 \
             dist/build-info.json \
             --target "$SOURCE_SHA" --title "Caddy 2.11.2 + NaiveFox transport ($RELEASE_TAG)" \
             --notes-file release-notes.md

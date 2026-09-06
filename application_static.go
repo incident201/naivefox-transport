@@ -15,8 +15,8 @@ func isCarrierPath(path string) bool {
 		path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/")
 }
 
-func isReservedApplicationPath(path string) bool {
-	_, asset := assetDefinition(path)
+func (application applicationFiles) isReservedApplicationPath(path string) bool {
+	_, asset := application.asset(path)
 	return asset || path == "/index.html" || path == "/api/realtime" ||
 		isCarrierPath(path) || strings.HasPrefix(path, "/__lab/")
 }
@@ -44,7 +44,7 @@ func (application applicationFiles) serveStatic(w http.ResponseWriter, r *http.R
 	canonical := path.Clean(requestPath)
 	if canonical == "/index.html" {
 		canonical = "/"
-	} else if strings.HasSuffix(requestPath, "/") && canonical != "/" && !isReservedApplicationPath(canonical) {
+	} else if strings.HasSuffix(requestPath, "/") && canonical != "/" && !application.isReservedApplicationPath(canonical) {
 		canonical += "/"
 	}
 	// Redirect before touching disk: normalized carrier and asset aliases must

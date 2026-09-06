@@ -14,7 +14,7 @@ import (
 func TestCaddyfileConfiguration(t *testing.T) {
 	input := `naivefox_transport {
         application_root /absolute/application
-        profile native-stream-v1
+        profile native-stream-v2
         forward_proxy {
             basic_auth fixture fixture
             basic_auth second p:a:ss

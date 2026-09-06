@@ -3,7 +3,7 @@ package transport
 import "testing"
 
 func TestOnlyCurrentProfileAccepted(t *testing.T) {
-	for _, profile := range []string{"v1", "continuous-v1", "continuous-bulk-pipeline"} {
+	for _, profile := range []string{"native-stream-v1", "v1", "continuous-v1", "continuous-bulk-pipeline"} {
 		handler := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: profile, ForwardProxy: testForwardProxy()}
 		if err := handler.Provision(testCaddyContext(t)); err == nil {
 			handler.Cleanup()

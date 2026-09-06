@@ -116,7 +116,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
-			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || len(body) != 4096 || !bytes.Contains(body, []byte("actual external application")) || response.Header.Get("X-App-Profile") != defaultProfile || response.Header.Get("X-App-Auth") != "basic" {
+			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || !bytes.Equal(body, mustReadFile(t, filepath.Join(templateRoot, "index.html"))) || len(response.Header.Get("X-App-Site")) != 64 || !bytes.Contains(body, []byte("actual external application")) || response.Header.Get("X-App-Profile") != defaultProfile || response.Header.Get("X-App-Auth") != "basic" {
 				t.Fatalf("origin handshake: status=%d protocol=%s length=%d read=%v", response.StatusCode, response.Proto, len(body), readErr)
 			}
 			break
@@ -499,7 +499,7 @@ func checkCombinedApplicationSite(t *testing.T, shared *http.Client, origin, roo
 		t.Fatal("encoded asset alias did not return to the transport route")
 	}
 	response, body = fetch("GET", response.Header.Get("Location"), nil)
-	if response.StatusCode != 200 || len(body) != scriptCapacity || !bytes.Equal(body, snapshot) {
+	if response.StatusCode != 200 || !bytes.Equal(body, snapshot) {
 		t.Fatal("static routing bypassed the transport snapshot")
 	}
 	writeApplicationFile(t, root, "index.html", []byte("changed after startup"))
@@ -508,7 +508,7 @@ func checkCombinedApplicationSite(t *testing.T, shared *http.Client, origin, roo
 		t.Fatal("root index did not redirect to the handshake")
 	}
 	response, body = fetch("GET", response.Header.Get("Location"), nil)
-	if response.StatusCode != 200 || len(body) != rootCapacity ||
+	if response.StatusCode != 200 || len(body) == 0 ||
 		!bytes.Contains(body, []byte("actual external application")) ||
 		response.Header.Get("X-App-Profile") != defaultProfile {
 		t.Fatal("root index bypassed the handshake snapshot")

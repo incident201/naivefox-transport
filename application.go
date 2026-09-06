@@ -2,126 +2,131 @@ package transport
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
+	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"unicode/utf8"
 )
-
-const (
-	rootCapacity   = 4096
-	styleCapacity  = 12288
-	scriptCapacity = 24576
-	imageCapacity  = 8192
-)
-
-type assetSpec struct {
-	path string
-	file string
-	size int
-	mime string
-	svg  bool
-}
-
-var applicationAssetSpecs = []assetSpec{
-	{path: "/", file: "index.html", size: rootCapacity, mime: "text/html; charset=utf-8"},
-	{path: "/assets/site.css", file: "assets/site.css", size: styleCapacity, mime: "text/css"},
-	{path: "/assets/app.js", file: "assets/app.js", size: scriptCapacity, mime: "text/javascript"},
-	{path: "/assets/image-1.svg", file: "assets/image-1.svg", size: imageCapacity, mime: "image/svg+xml", svg: true},
-	{path: "/assets/image-2.svg", file: "assets/image-2.svg", size: imageCapacity, mime: "image/svg+xml", svg: true},
-	{path: "/assets/image-3.svg", file: "assets/image-3.svg", size: imageCapacity, mime: "image/svg+xml", svg: true},
-	{path: "/assets/image-4.svg", file: "assets/image-4.svg", size: imageCapacity, mime: "image/svg+xml", svg: true},
-}
 
 type applicationAsset struct {
 	body []byte
 	mime string
 }
-
 type applicationFiles struct {
 	assets    map[string]applicationAsset
+	resources []siteResource
+	identity  string
+	bodyBytes uint64
 	directory *os.Root
 }
 
-func assetDefinition(path string) (assetSpec, bool) {
-	for _, spec := range applicationAssetSpecs {
-		if spec.path == path {
-			return spec, true
-		}
-	}
-	return assetSpec{}, false
-}
-
-func readApplicationFile(root *os.Root, spec assetSpec) ([]byte, error) {
-	name := filepath.FromSlash(spec.file)
+// readApplicationFile confines named regular files and checks identity before
+// and after opening. There is no application size budget or padding.
+func readApplicationFile(root *os.Root, name string) ([]byte, error) {
 	before, err := root.Lstat(name)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", spec.file, err)
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	if before.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("%s: symbolic links are not allowed", spec.file)
+	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: not a regular file or is a symlink", name)
 	}
-	if !before.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s: not a regular file", spec.file)
-	}
-	if before.Size() <= 0 {
-		return nil, fmt.Errorf("%s: file is empty", spec.file)
-	}
-	if before.Size() > int64(spec.size) {
-		return nil, fmt.Errorf("%s: source exceeds %d bytes", spec.file, spec.size)
-	}
-	file, err := root.Open(name)
+	file, err := openStaticFile(root, name)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", spec.file, err)
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	defer file.Close()
 	after, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", spec.file, err)
+		return nil, err
 	}
 	if !after.Mode().IsRegular() || !os.SameFile(before, after) {
-		return nil, fmt.Errorf("%s: file changed during application load", spec.file)
+		return nil, fmt.Errorf("%s: file changed during application load", name)
 	}
-	body, err := io.ReadAll(io.LimitReader(file, int64(spec.size+1)))
+	body, err := io.ReadAll(file)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", spec.file, err)
+		return nil, err
 	}
-	if len(body) != int(after.Size()) {
-		return nil, fmt.Errorf("%s: file changed during application load", spec.file)
-	}
-	if len(body) > spec.size {
-		return nil, fmt.Errorf("%s: source exceeds %d bytes", spec.file, spec.size)
-	}
-	if !utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0 {
-		return nil, fmt.Errorf("%s: expected NUL-free UTF-8 text", spec.file)
-	}
-	if spec.svg {
-		lower := bytes.ToLower(body)
-		if !bytes.Contains(lower, []byte("<svg")) || !bytes.Contains(lower, []byte("</svg>")) {
-			return nil, fmt.Errorf("%s: expected complete SVG markup", spec.file)
-		}
+	final, err := file.Stat()
+	if err != nil || int64(len(body)) != after.Size() || final.Size() != after.Size() || !final.ModTime().Equal(after.ModTime()) {
+		return nil, fmt.Errorf("%s: file changed during application load", name)
 	}
 	return body, nil
 }
 
-func readApplicationSources(root *os.Root) (map[string][]byte, error) {
-	sources := make(map[string][]byte, len(applicationAssetSpecs))
-	for _, spec := range applicationAssetSpecs {
-		body, err := readApplicationFile(root, spec)
-		if err != nil {
-			return nil, err
-		}
-		sources[spec.path] = body
+func verifyApplicationFile(root *os.Root, name string, expected []byte) error {
+	file, err := openStaticFile(root, name)
+	if err != nil {
+		return err
 	}
-	return sources, nil
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(expected)) {
+		return fmt.Errorf("%s: file changed during application load", name)
+	}
+	// Verify through a fixed buffer instead of holding a second full site copy.
+	var buffer [32768]byte
+	offset := 0
+	for {
+		n, readErr := file.Read(buffer[:])
+		if n > len(expected)-offset || !bytes.Equal(buffer[:n], expected[offset:offset+n]) {
+			return fmt.Errorf("%s: file changed during application load", name)
+		}
+		offset += n
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+	if offset != len(expected) {
+		return fmt.Errorf("%s: file changed during application load", name)
+	}
+	return nil
 }
 
-func paddedApplicationAsset(body []byte, capacity int) []byte {
-	padded := bytes.Repeat([]byte{' '}, capacity)
-	copy(padded, body)
-	return padded
+func applicationMIME(name, kind string, body []byte) (string, error) {
+	var typ string
+	switch kind {
+	case "style":
+		typ = "text/css"
+	case "script":
+		typ = "text/javascript"
+	case "image":
+		typ = mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+		if typ == "" {
+			typ = http.DetectContentType(body)
+		}
+		if !strings.HasPrefix(typ, "image/") {
+			return "", fmt.Errorf("%s: expected an image Content-Type", name)
+		}
+		if strings.HasPrefix(typ, "image/svg+xml") {
+			lower := bytes.ToLower(body)
+			if !bytes.Contains(lower, []byte("<svg")) || !bytes.Contains(lower, []byte("</svg>")) {
+				return "", fmt.Errorf("%s: expected complete SVG markup", name)
+			}
+		}
+	}
+	if (kind == "style" || kind == "script") && (!utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0) {
+		return "", fmt.Errorf("%s: expected NUL-free UTF-8", name)
+	}
+	return typ, nil
+}
+
+func snapshotField(h hash.Hash, body []byte) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(body)))
+	h.Write(length[:])
+	h.Write(body)
 }
 
 func loadApplication(root string) (application applicationFiles, err error) {
@@ -140,33 +145,57 @@ func loadApplication(root string) (application applicationFiles, err error) {
 			directory.Close()
 		}
 	}()
-
-	sources, err := readApplicationSources(directory)
+	body, err := readApplicationFile(directory, "index.html")
 	if err != nil {
 		return applicationFiles{}, err
 	}
-	verification, err := readApplicationSources(directory)
+	resources, err := discoverApplication(body)
 	if err != nil {
 		return applicationFiles{}, err
 	}
-	for _, spec := range applicationAssetSpecs {
-		if !bytes.Equal(sources[spec.path], verification[spec.path]) {
-			return applicationFiles{}, fmt.Errorf("%s: file changed during application load", spec.file)
+	application = applicationFiles{assets: map[string]applicationAsset{"/": {body: body, mime: "text/html; charset=utf-8"}}, resources: resources, directory: directory, bodyBytes: uint64(len(body))}
+	h := sha256.New()
+	snapshotField(h, []byte("naivefox-site-v2"))
+	snapshotField(h, body)
+	for _, resource := range resources {
+		asset, exists := application.assets[resource.Path]
+		if !exists {
+			name := filepath.FromSlash(strings.TrimPrefix(resource.Path, "/"))
+			data, readErr := readApplicationFile(directory, name)
+			if readErr != nil {
+				return applicationFiles{}, readErr
+			}
+			typ, typeErr := applicationMIME(name, resource.Kind, data)
+			if typeErr != nil {
+				return applicationFiles{}, typeErr
+			}
+			asset = applicationAsset{body: data, mime: typ}
+			application.assets[resource.Path] = asset
+		} else {
+			typ, typeErr := applicationMIME(resource.Path, resource.Kind, asset.body)
+			if typeErr != nil || typ != asset.mime {
+				return applicationFiles{}, fmt.Errorf("conflicting resource types for %s", resource.Path)
+			}
+		}
+		if ^uint64(0)-application.bodyBytes < uint64(len(asset.body)) {
+			return applicationFiles{}, errors.New("site byte count overflow")
+		}
+		application.bodyBytes += uint64(len(asset.body))
+		snapshotField(h, []byte(resource.URI))
+		snapshotField(h, []byte(resource.Kind))
+		snapshotField(h, []byte(asset.mime))
+		snapshotField(h, asset.body)
+	}
+	for resourcePath, asset := range application.assets {
+		name := strings.TrimPrefix(resourcePath, "/")
+		if resourcePath == "/" {
+			name = "index.html"
+		}
+		if err := verifyApplicationFile(directory, filepath.FromSlash(name), asset.body); err != nil {
+			return applicationFiles{}, err
 		}
 	}
-	for _, spec := range applicationAssetSpecs[1:] {
-		if bytes.Count(sources["/"], []byte(spec.path)) != 1 {
-			return applicationFiles{}, fmt.Errorf("index.html: expected exactly one reference to %s", spec.path)
-		}
-	}
-
-	application = applicationFiles{assets: make(map[string]applicationAsset, len(applicationAssetSpecs)), directory: directory}
-	for _, spec := range applicationAssetSpecs {
-		application.assets[spec.path] = applicationAsset{
-			body: paddedApplicationAsset(sources[spec.path], spec.size),
-			mime: spec.mime,
-		}
-	}
+	application.identity = hex.EncodeToString(h.Sum(nil))
 	return application, nil
 }
 
@@ -174,9 +203,6 @@ func (application applicationFiles) asset(path string) (applicationAsset, bool) 
 	asset, ok := application.assets[path]
 	return asset, ok
 }
-
-// close releases the directory retained for live static files. The seven
-// transport assets remain an immutable snapshot independent of this handle.
 func (application applicationFiles) close() error {
 	if application.directory != nil {
 		return application.directory.Close()

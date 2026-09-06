@@ -13,7 +13,10 @@ handler. **Both transports use the same username/password and destination
 policy, configured once. There is no separate key or mandatory target list.**
 
 For deployment, see [Site directory and Caddyfile](#site-directory-and-caddyfile):
-one `application_root` contains the full public site and its seven required files.
+one `application_root` contains the full public site; `index.html` determines the startup resource set.
+
+The [site contract](docs/SITE.md) defines supported HTML, unpadded snapshots,
+size recommendations and the unchanged no-cache behavior.
 
 The client keeps its existing proxy URL and changes only `transport`:
 
@@ -63,7 +66,7 @@ This code began as an application-carrier experiment. Its history, optional
 browser/loopback bridge, external gallery template, and experimental profiles
 remain here for reproducibility. The template is a server deployment asset and
 is never linked into the native lean NaiveFox client. The selected profile is
-`native-stream-v1`: other experimental
+`native-stream-v2`: other experimental
 profiles are not interchangeable with the native client. Historical bandwidth,
 timing, and browser results are in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 Those results do not establish the camouflage quality of a native client.
@@ -72,9 +75,9 @@ Those results do not establish the camouflage quality of a native client.
 
 NaiveFox exposes two transports: `classic` (the default) and `no-connect`.
 Select `"transport":"no-connect"` or `--transport no-connect` in the matching
-client. No-connect completes the root, six assets and twenty ordered HTTP
+client. No-connect completes the root and all HTML-selected resources and twenty ordered HTTP
 POST/GET pairs, then uses one native WebSocket per carrier with subprotocol
-`nfc1.stream.v1`. The profile is `native-stream-v1`; omit `profile` or use
+`nfc1.stream.v1`. The profile is `native-stream-v2`; omit `profile` or use
 that exact value in Caddy configuration.
 
 The fixed startup uses H2 or H3 as selected by the client URI. The persistent
@@ -148,42 +151,21 @@ build graph.
 
 ## Site directory and Caddyfile
 
-Put the **entire public site in one directory**. Set `application_root` to the
-directory containing `index.html`, not to `assets/` or to a file. For example:
+Place the entire public site in one directory and point application_root to its
+index.html directory. The module loads index.html and every distinct supported
+resource directly declared in it into an immutable memory snapshot. There are
+no compulsory filenames, resource counts, manifest files or fixed-size padding.
 
-```text
-/etc/caddy/naivefox-applications/atlas-v1/
-├── index.html                 # required
-├── assets/
-│   ├── site.css               # required
-│   ├── app.js                 # required
-│   ├── image-1.svg            # required
-│   ├── image-2.svg            # required
-│   ├── image-3.svg            # required
-│   ├── image-4.svg            # required
-│   ├── extra.js               # optional example
-│   └── fonts/
-│       └── body.woff2         # optional example
-├── pages/
-│   └── about/
-│       └── index.html         # optional example
-└── favicon.ico                # optional example
-```
-
-The seven marked files are required; add any other site files in this same tree.
-Only the seven have the [fixed transport size and format limits](template/README.md#fixed-public-contract).
-For example, `assets/extra.js` is available at `/assets/extra.js`, and
-`pages/about/index.html` at `/pages/about/`. No manifest or second directory
-is needed. Keep private configuration, logs and keys outside the public tree.
-
-Save this configuration as **`/etc/caddy/Caddyfile`**, outside the site directory.
-Replace `proxy.example.com`, `USER` and `PASSWORD` with your values:
+Other files remain available from that directory on GET/HEAD. No separate root
+or file_server block is needed. Follow the complete [site contract](docs/SITE.md)
+for supported tags, direct-versus-secondary resources, URL rules, memory costs,
+size recommendations and update behavior.
 
 ```caddyfile
 :443, proxy.example.com {
     route {
         naivefox_transport {
-            application_root /etc/caddy/naivefox-applications/atlas-v1
+            application_root /etc/caddy/my-site
             forward_proxy {
                 basic_auth USER PASSWORD
                 hide_ip
@@ -196,58 +178,27 @@ Replace `proxy.example.com`, `USER` and `PASSWORD` with your values:
 }
 ```
 
-No separate `root` or `file_server` directive is needed for this site.
-`respond 404` handles requests with no matching file or transport route.
+Keep both the hostless :443 address for destination-authority classic CONNECT
+and the named host for certificate automation. Move the existing forward_proxy
+block inside naivefox_transport, preserving credentials and policy. Both
+transports share that one policy.
 
-Keep both site addresses: `:443` receives classic CONNECT requests whose
-authority names the destination, and the named host enables certificate
-automation. If you already have a `forward_proxy` block, move its entire
-contents inside `naivefox_transport`, preserving its options; remove the old
-standalone block. Repeat `basic_auth` for additional accounts. Both transports
-share these credentials and the existing `acl`, `ports`, `upstream` and
-`dial_timeout` settings. Default protection against private/LAN destinations
-still applies. A configured upstream owns destination DNS and policy.
+There is no mandatory site-byte budget. Every new carrier downloads the full
+selected first level, with at most six resource requests active at once and
+client caching still disabled. Large directly declared files therefore increase
+startup traffic and delay. The module retains selected file bytes in memory;
+unselected files are read only on demand. Recommendations do not silently
+truncate or omit large resources.
 
-[examples/Caddyfile](examples/Caddyfile) is the equivalent configuration using
-environment variables. Set all four variables documented at its top in the
-environment that starts or reloads Caddy. For a source build:
+Reload after changing index.html, any selected resource, or the root directory.
+Changes to unselected files take effect on the next request. Validate first;
+missing, invalid or unstable selected files reject reload and preserve the
+running configuration. Use a complete new directory for consistent whole-site
+updates. Keep private files outside this public root.
 
-```sh
-./artifacts/bin/caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile
-./artifacts/bin/caddy run --adapter caddyfile --config /etc/caddy/Caddyfile
-```
-
-For a downloaded release, use `./caddy-linux-amd64` in those commands.
-For an existing systemd service, use the installation steps below.
-
-### File serving and updates
-
-| Content | Served from | When changes take effect |
-| --- | --- | --- |
-| Seven required files | Validated, padded snapshot in memory | Successful reload/restart |
-| All additional files | Disk on each GET/HEAD request | Without reload; browsers revalidate cached responses |
-| Replacement of the root directory itself | Directory opened by the running module | Successful reload/restart |
-
-Extra files have no transport size or text-format limits. Their responses
-support MIME types, Last-Modified, conditional requests and byte ranges, with
-`Cache-Control: no-cache`. Nested directories with `index.html` are supported.
-Directory listing and automatic SPA fallback are disabled. `/index.html`
-redirects to `/`, which serves the memory snapshot.
-
-The seven fixed URLs and existing transport/diagnostic routes take priority
-over files. Extra requests do not create transport sessions. Missing files and
-unsupported static methods pass through forwardproxy to the next handler.
-Do not put a compression handler around transport routes.
-
-For a consistent whole-site update, prepare a complete new directory, change
-`application_root` and reload. Invalid required files reject startup/reload;
-a failed reload preserves the running configuration. The
-[template instructions](template/README.md) list exact file limits and reserved URLs.
-
-If upgrading from the old split-directory setup, move all additional public
-files into `application_root` at their existing relative paths and remove the
-separate site `root`/`file_server` configuration. This change requires the
-updated server binary; no client update or new configuration option is needed.
+Upgrade both the server and NaiveFox for native-stream-v2. Old v1 peers fail
+closed; they do not fall back to classic. The NFC1 cells, twenty API pairs and
+nfc1.stream.v1 WebSocket subprotocol remain unchanged.
 
 ## Install or upgrade the systemd service
 
@@ -301,7 +252,7 @@ package upgrades do not overwrite the custom binary under `/usr/local/bin`.
 To roll back, restore the saved Caddyfile, remove only these two executable
 overrides, reload systemd, and restart the service with its original executable.
 
-The native client requires `X-App-Profile: native-stream-v1` and
+The native client requires `X-App-Profile: native-stream-v2` and
 `X-App-Auth: basic` on the initial `GET /` response before it sends AUTH.
 These headers are emitted only for
 the root handshake, report the resolved profile even when configuration omits
@@ -313,7 +264,7 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 
 The JSON handler name is `naivefox_transport`. Its required
 `application_root` string is an absolute path to a complete public site containing
-the seven required transport files and any additional resources. Missing or
+index.html, its selected resources and any additional site files. Missing or
 relative roots and unreadable, incomplete, symlink-escaping, concurrently changing
 or oversized required files fail provisioning. Extra files are not part of that
 validation; request-time reads are confined to the root and reject special files.
@@ -333,7 +284,7 @@ client. Remove server `key` and
 even when empty; they are never ignored. Old key-based servers lack the new
 Basic handshake and cannot accidentally receive a new client's credentials.
 
-The omitted `profile` resolves to `native-stream-v1`, with 512 KiB of
+The omitted `profile` resolves to `native-stream-v2`, with 512 KiB of
 receive credit per stream. An explicit profile must match the client. The
 experimental `append_mode` and other profiles are for historical tests, not
 native no-connect configuration. `stats_path` optionally writes counters on
@@ -358,7 +309,7 @@ refresh that timer. There is no fixed lifetime limit on active sessions. Byte of
 wrap modulo 2^32, so a stream is not limited to 4 GiB. Cell sequences and stream
 IDs do not wrap/reuse within a session. There is no reconnect or resume.
 
-The supported native contract is `native-stream-v1`. Retired finite profiles
+The supported native contract is `native-stream-v2`. Retired finite profiles
 and browser/bridge implementations are available only in Git history.
 Tests cover credit, authentication/policy, framing, startup retirement,
 WebSocket transfer, half-close, expiry, cancellation and TLS cohosting.

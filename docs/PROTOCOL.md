@@ -1,52 +1,40 @@
 # Native no-connect contract (NFC1)
 
-This document describes the `native-stream-v1` profile shared by the
+This document describes the `native-stream-v2` profile shared by the
 Caddy module and the native lean NaiveFox client. Other profiles are laboratory
 variants documented in [EXPERIMENTS.md](EXPERIMENTS.md); they are not negotiated
 or silently substituted. `append_mode` must be false for the native client.
 
 ## Origin, session and authentication
 
-1. Connect to a configured HTTPS origin with ordinary certificate validation,
-   using the client's normal HTTP/2 or HTTP/3 stack. No CONNECT, outer WebSocket,
-   browser JavaScript runtime, or private loopback bridge is needed by the
-   native implementation.
-2. `GET /` returns 200 and exactly 4096 bytes of padded UTF-8 HTML loaded
-   from the configured external `application_root`, plus
-   `X-App-Profile: native-stream-v1` and `X-App-Auth: basic`. The native
-   client rejects missing or different values before AUTH. The server sets a random 32-byte token,
-   hex-encoded as the `app_session` cookie, with Path=/, Secure, HttpOnly and
-   SameSite=Strict. Retain that cookie on all carrier requests. The server binds
-   it to the peer IP, not a connection's source port. Redirecting to another
-   origin or losing the cookie is not a transparent session restart.
-3. Fetch the ordinary assets without executing them: `/assets/site.css`
-   (12288 bytes), `/assets/app.js` (24576 bytes), and
-   `/assets/image-{1,2,3,4}.svg` (8192 bytes each). With the root, cold bootstrap
-   is 73728 response-body bytes. Assets are cacheable; root and carriers are not.
-4. The first client upload contains AUTH as its first frame. Stream and frame
-   sequence are zero; its payload is ASCII `Basic ` followed by standard padded
-   Base64 of the URL-decoded proxy username, a colon, and proxy password. These
-   are the same credentials as classic; no separate key exists. The complete
-   AUTH body must fit the first cell (4064 bytes available after headers).
-   Additional frames may follow AUTH when capacity permits.
+1. Connect to the configured HTTPS origin with ordinary certificate validation,
+   using native strict HTTP/2 or HTTP/3. The later WebSocket phase uses H1 TLS/TCP.
+2. GET / returns the actual nonempty UTF-8 index.html body, X-App-Profile:
+   native-stream-v2, X-App-Auth: basic, X-App-Realtime: websocket-v1 and an
+   X-App-Site snapshot identity. The random app_session cookie is retained on
+   carrier requests. A mismatched profile is rejected before AUTH or target OPEN.
+3. Discover all supported directly declared resources from that HTML and complete
+   their GETs, at most six at a time. Names, number and body sizes come from the
+   site; there is no site-byte budget or space padding. Bodies are streamed.
+   Every selected response must carry the same snapshot identity. Client caching
+   remains inhibited; there are no inter-carrier cache hits or shared requests.
+4. The first upload contains AUTH as its first frame. Stream and frame sequence
+   are zero; its body is ASCII Basic followed by standard padded Base64 of the
+   URL-decoded username, colon and password. Credentials and forward-proxy policy
+   are the same as classic. AUTH must fit its first 4096-byte cell.
 
-The application directory is not part of the NFC1 codec. During provisioning,
-Caddy reads and validates the fixed seven public files twice, requires two
-identical complete snapshots, pads every response to the capacities above, and
-retains one immutable memory snapshot. Missing, relative, unreadable, malformed,
-special, symlinked, concurrently changing or oversized bundles fail
-provisioning. Requests for these seven transport resources never read their
-source files from disk. Additional ordinary site resources are served on
-GET/HEAD directly from the same `application_root`, without creating transport
-sessions or changing NFC1. They are read on each request and have ordinary
-static HTTP semantics; their contents and sizes are outside the fixed transport
-contract. Existing transport/diagnostic URLs retain priority over files, and
-`/index.html` redirects to the snapshot at `/`. Changes to the seven required
-files or replacement of the root directory require reload/restart.
-The production JavaScript is served verbatim before padding and has no injected
-profile, NFC1 runtime, carrier endpoint names or required markers. File contents
-may be customized, while the paths, capacities, MIME types and root resource
-references remain fixed. See [the template contract](../template/README.md).
+The [site contract](SITE.md) specifies supported markup, URL and MIME rules,
+advisory sizes, immutable in-memory public snapshots, ordinary extra files and
+reload behavior. It requires no operator manifest or injected JavaScript.
+CSS/script/image bodies are leaves; the client neither recursively crawls
+dependencies nor executes a browser application.
+
+Snapshot identity is lowercase SHA-256. Hash length-prefixed fields in discovery
+order: the domain string naivefox-site-v2, root bytes, then each deduplicated
+resource's normalized request URI (including query, without fragment), kind
+(style/script/image), MIME string and body bytes. Each field is prefixed by its
+unsigned 64-bit big-endian byte length. The identity detects mixed snapshots;
+it is public metadata, not authentication. Reload mismatch fails without replay.
 
 AUTH is accepted once per session and compared in constant time. Empty
 unauthenticated cells are permitted for ordinary visitors; they cannot open
@@ -140,9 +128,9 @@ advancing the cell sequence; sequence validation remains atomic with dispatch.
 
 ## Startup and persistent carrier
 
-The supported profile is `native-stream-v1`. The client verifies the root
+The supported profile is `native-stream-v2`. The client verifies the root
 profile, Basic authentication contract and WebSocket capability before AUTH
-or target opening. Root and six assets complete before the twenty ordered
+or target opening. Root and all HTML-selected resources complete before the twenty ordered
 POST/GET pairs. Each POST to `/api/sync` is exactly 4096 bytes; each GET uses
 the next fixed response slot:
 
@@ -205,10 +193,10 @@ Classic remains the client's default and uses the unchanged ordinary
 forward-proxy implementation. No-connect is the only alternate transport.
 Old finite HTTP profiles and the hybrid/asymmetric subprotocols are rejected.
 Both transports share one listener and one `application_root`: the complete
-public site containing the seven required transport files and all additional
+public site containing index.html, its selected resources and all additional
 resources. No separate site `root` or `file_server` is needed. See the
 [directory layout and complete Caddyfile](../README.md#site-directory-and-caddyfile).
-Omit `profile` or set `native-stream-v1`.
+Omit `profile` or set `native-stream-v2`.
 
 Diagnostics are disabled unless explicitly enabled. Private statistics
 retain bounded request labels, directional cell counts, useful/filler byte

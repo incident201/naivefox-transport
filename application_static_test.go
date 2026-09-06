@@ -53,8 +53,8 @@ func requestApplicationSite(t *testing.T, module *Transport, method, target stri
 
 func TestApplicationStaticFiles(t *testing.T) {
 	root := copyApplicationTemplate(t)
-	// A full site can reference resources outside the seven transport assets.
-	index := append(mustReadFile(t, filepath.Join(root, "index.html")), []byte("<script src=/extra/module.js></script>")...)
+	// Navigation links leave additional files on the ordinary live static path.
+	index := append(mustReadFile(t, filepath.Join(root, "index.html")), []byte("<a href=/extra/module.js>Download</a>")...)
 	writeApplicationFile(t, root, "index.html", index)
 	module := provisionApplicationSite(t, root)
 	cases := []struct {
@@ -128,20 +128,23 @@ func TestApplicationStaticUpdatesAndTransportSnapshot(t *testing.T) {
 	if response := requestApplicationSite(t, module, "GET", "/extra.txt", nil); response.Code != 404 {
 		t.Fatal("deleted static file remains available")
 	}
-	for _, spec := range applicationAssetSpecs {
-		snapshot, _ := module.application.asset(spec.path)
-		writeApplicationFile(t, root, spec.file, []byte("invalid replacement"))
+	for route, snapshot := range module.application.assets {
+		source := strings.TrimPrefix(route, "/")
+		if route == "/" {
+			source = "index.html"
+		}
+		writeApplicationFile(t, root, source, []byte("invalid replacement"))
 		for _, remove := range []bool{false, true} {
 			if remove {
-				if err := os.Remove(filepath.Join(root, filepath.FromSlash(spec.file))); err != nil {
+				if err := os.Remove(filepath.Join(root, filepath.FromSlash(source))); err != nil {
 					t.Fatal(err)
 				}
 			}
-			response := requestApplicationSite(t, module, "GET", spec.path+"?v=changed", nil)
+			response := requestApplicationSite(t, module, "GET", route+"?v=changed", nil)
 			if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), snapshot.body) ||
-				response.Header().Get("Content-Length") != strconv.Itoa(spec.size) ||
-				response.Header().Get("Content-Type") != spec.mime {
-				t.Fatalf("transport snapshot changed for %s", spec.path)
+				response.Header().Get("Content-Length") != strconv.Itoa(len(snapshot.body)) ||
+				response.Header().Get("Content-Type") != snapshot.mime {
+				t.Fatalf("transport snapshot changed for %s", route)
 			}
 		}
 	}

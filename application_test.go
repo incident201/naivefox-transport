@@ -67,9 +67,9 @@ func writeApplicationFile(t *testing.T, root, relative string, body []byte) {
 	}
 }
 
-func TestExternalApplicationSnapshotAndWireCapacities(t *testing.T) {
+func TestExternalApplicationSnapshotAndActualBodies(t *testing.T) {
 	root := copyApplicationTemplate(t)
-	customRoot := []byte("<!doctype html><title>Custom</title><link rel=stylesheet href=/assets/site.css><script src=/assets/app.js></script><img src=/assets/image-1.svg><img src=/assets/image-2.svg><img src=/assets/image-3.svg><img src=/assets/image-4.svg>")
+	customRoot := []byte("<!doctype html><title>Custom</title><link rel=stylesheet href=/assets/site.css><script defer src=/assets/app.js></script><img src=/assets/image-1.svg><img src=/assets/image-2.svg><img src=/assets/image-3.svg><img src=/assets/image-4.svg>")
 	customScript := []byte(`"use strict";document.title="Operator application";`)
 	writeApplicationFile(t, root, "index.html", customRoot)
 	writeApplicationFile(t, root, "assets/app.js", customScript)
@@ -79,12 +79,17 @@ func TestExternalApplicationSnapshotAndWireCapacities(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
-	for _, spec := range applicationAssetSpecs {
-		asset, ok := module.application.asset(spec.path)
-		if !ok || len(asset.body) != spec.size || asset.mime != spec.mime {
-			t.Fatalf("asset contract changed for %s", spec.path)
+	for route, asset := range module.application.assets {
+		name := strings.TrimPrefix(route, "/")
+		if route == "/" {
+			name = "index.html"
+		}
+		expected := mustReadFile(t, filepath.Join(root, name))
+		if !bytes.Equal(asset.body, expected) {
+			t.Fatalf("source body changed for %s", route)
 		}
 	}
+
 	script, _ := module.application.asset("/assets/app.js")
 	if !bytes.HasPrefix(script.body, customScript) {
 		t.Fatal("custom script was not served verbatim")
@@ -102,7 +107,7 @@ func TestExternalApplicationSnapshotAndWireCapacities(t *testing.T) {
 	if err := module.ServeHTTP(response, testRequest(http.MethodGet, "https://localhost/", nil), next); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || response.Body.Len() != rootCapacity || !bytes.HasPrefix(response.Body.Bytes(), customRoot) {
+	if response.Code != http.StatusOK || response.Body.Len() != len(customRoot) || !bytes.HasPrefix(response.Body.Bytes(), customRoot) {
 		t.Fatal("custom root response contract")
 	}
 	writeApplicationFile(t, root, "index.html", []byte("changed after provision"))
@@ -185,11 +190,7 @@ func TestExternalApplicationRejectsUnsafeOrIncompatibleContent(t *testing.T) {
 		body      func([]byte) []byte
 		errorPart string
 	}{
-		{
-			name: "oversized-root", relative: "index.html",
-			body:      func([]byte) []byte { return bytes.Repeat([]byte("x"), rootCapacity+1) },
-			errorPart: "exceeds",
-		},
+
 		{
 			name: "invalid-utf8", relative: "assets/site.css",
 			body:      func([]byte) []byte { return []byte{0xff, 0xfe} },
@@ -210,14 +211,7 @@ func TestExternalApplicationRejectsUnsafeOrIncompatibleContent(t *testing.T) {
 			body: func(body []byte) []byte {
 				return bytes.Replace(body, []byte("/assets/image-4.svg"), []byte("/missing.svg"), 1)
 			},
-			errorPart: "/assets/image-4.svg",
-		},
-		{
-			name: "duplicate-resource-reference", relative: "index.html",
-			body: func(body []byte) []byte {
-				return append(body, []byte("<img src=/assets/image-4.svg>")...)
-			},
-			errorPart: "/assets/image-4.svg",
+			errorPart: "missing.svg",
 		},
 	}
 	for _, test := range cases {
