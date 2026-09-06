@@ -12,6 +12,9 @@ application routes and delegates classic requests to one nested `forward_proxy`
 handler. **Both transports use the same username/password and destination
 policy, configured once. There is no separate key or mandatory target list.**
 
+For deployment, see [Site directory and Caddyfile](#site-directory-and-caddyfile):
+one `application_root` contains the full public site and its seven required files.
+
 The client keeps its existing proxy URL and changes only `transport`:
 
 ```json
@@ -143,12 +146,38 @@ tests against that actual module. Caddy still owns the client-facing HTTP/TLS
 stack. These Go dependencies are server-only and never enter the lean C++ client
 build graph.
 
-## Serve classic and no-connect together
+## Site directory and Caddyfile
 
-Use [examples/Caddyfile](examples/Caddyfile) with the combined binary. Set the
-server hostname, absolute application-template path, proxy username and proxy
-password. Protect the environment file and do not commit credentials. The
-equivalent literal configuration is:
+Put the **entire public site in one directory**. Set `application_root` to the
+directory containing `index.html`, not to `assets/` or to a file. For example:
+
+```text
+/etc/caddy/naivefox-applications/atlas-v1/
+├── index.html                 # required
+├── assets/
+│   ├── site.css               # required
+│   ├── app.js                 # required
+│   ├── image-1.svg            # required
+│   ├── image-2.svg            # required
+│   ├── image-3.svg            # required
+│   ├── image-4.svg            # required
+│   ├── extra.js               # optional example
+│   └── fonts/
+│       └── body.woff2         # optional example
+├── pages/
+│   └── about/
+│       └── index.html         # optional example
+└── favicon.ico                # optional example
+```
+
+The seven marked files are required; add any other site files in this same tree.
+Only the seven have the [fixed transport size and format limits](template/README.md#fixed-public-contract).
+For example, `assets/extra.js` is available at `/assets/extra.js`, and
+`pages/about/index.html` at `/pages/about/`. No manifest or second directory
+is needed. Keep private configuration, logs and keys outside the public tree.
+
+Save this configuration as **`/etc/caddy/Caddyfile`**, outside the site directory.
+Replace `proxy.example.com`, `USER` and `PASSWORD` with your values:
 
 ```caddyfile
 :443, proxy.example.com {
@@ -167,47 +196,60 @@ equivalent literal configuration is:
 }
 ```
 
-Keep both site addresses. Classic H2/H3 CONNECT carries the destination
-(`example.com:443`), not the proxy hostname, in its HTTP authority. A
-hostname-only site therefore misses ordinary classic tunnels while no-connect
-still appears healthy because its carrier requests use the proxy hostname.
-The `:443` catch-all makes the same handler receive arbitrary CONNECT
-authorities; the named address remains necessary for certificate automation.
-Do not replace this pair with a hostname-only site.
+No separate `root` or `file_server` directive is needed for this site.
+`respond 404` handles requests with no matching file or transport route.
 
-If you already have `forward_proxy`, move its **entire existing block** inside
-`naivefox_transport`, preserving all its options. Do not leave a duplicate
-standalone handler. Repeat `basic_auth` for multiple accounts if needed; all
-accounts work in both modes. Then validate with the **new** binary:
+Keep both site addresses: `:443` receives classic CONNECT requests whose
+authority names the destination, and the named host enables certificate
+automation. If you already have a `forward_proxy` block, move its entire
+contents inside `naivefox_transport`, preserving its options; remove the old
+standalone block. Repeat `basic_auth` for additional accounts. Both transports
+share these credentials and the existing `acl`, `ports`, `upstream` and
+`dial_timeout` settings. Default protection against private/LAN destinations
+still applies. A configured upstream owns destination DNS and policy.
+
+[examples/Caddyfile](examples/Caddyfile) is the equivalent configuration using
+environment variables. Set all four variables documented at its top in the
+environment that starts or reloads Caddy. For a source build:
 
 ```sh
-./artifacts/bin/caddy validate --adapter caddyfile --config examples/Caddyfile
-./artifacts/bin/caddy run --adapter caddyfile --config examples/Caddyfile
+./artifacts/bin/caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile
+./artifacts/bin/caddy run --adapter caddyfile --config /etc/caddy/Caddyfile
 ```
 
-Both transports use the nested handler's credentials, `acl`, `ports`, `upstream`
-and `dial_timeout` configuration. Public hostnames and ports do not need individual entries.
-Forwardproxy's ordinary default protection against private/LAN destinations
-still applies; use its normal ACL to intentionally allow such destinations.
-No no-connect-only target allowlist exists. As in ordinary forwardproxy, an
-explicit `upstream` delegates destination DNS, ACL and port policy to that
-upstream instead of enforcing those local destination rules. No-connect
-performs cancellable dialing, preserves TCP half-close and validates HTTPS
-upstream certificates, including on loopback.
+For a downloaded release, use `./caddy-linux-amd64` in those commands.
+For an existing systemd service, use the installation steps below.
 
-The module requires an absolute `application_root`. It reads and validates the
-seven known files twice during provisioning, requires two identical complete
-snapshots, pads them to the fixed wire capacities, and then serves an immutable
-in-memory snapshot. It never reads the directory on individual requests and
-does not require an external generator or manifest. An invalid or concurrently
-changing bundle fails startup/reload without a built-in fallback. See
-[the template contract](template/README.md) before customizing it.
+### File serving and updates
 
-The module owns `/` and its fixed application/assets routes, so an existing
-root page on that hostname is replaced. Classic H3 startup remains supported.
-Other requests pass through forwardproxy to the next handler. Do not put a
-compression handler around carrier routes. Extra ordinary site files belong in
-a later `file_server` and are outside the validated application graph.
+| Content | Served from | When changes take effect |
+| --- | --- | --- |
+| Seven required files | Validated, padded snapshot in memory | Successful reload/restart |
+| All additional files | Disk on each GET/HEAD request | Without reload; browsers revalidate cached responses |
+| Replacement of the root directory itself | Directory opened by the running module | Successful reload/restart |
+
+Extra files have no transport size or text-format limits. Their responses
+support MIME types, Last-Modified, conditional requests and byte ranges, with
+`Cache-Control: no-cache`. Nested directories with `index.html` are supported.
+Directory listing and automatic SPA fallback are disabled. `/index.html`
+redirects to `/`, which serves the memory snapshot.
+
+The seven fixed URLs and existing transport/diagnostic routes take priority
+over files. Extra requests do not create transport sessions. Missing files and
+unsupported static methods pass through forwardproxy to the next handler.
+Do not put a compression handler around transport routes.
+
+For a consistent whole-site update, prepare a complete new directory, change
+`application_root` and reload. Invalid required files reject startup/reload;
+a failed reload preserves the running configuration. The
+[template instructions](template/README.md) list exact file limits and reserved URLs.
+
+If upgrading from the old split-directory setup, move all additional public
+files into `application_root` at their existing relative paths and remove the
+separate site `root`/`file_server` configuration. This change requires the
+updated server binary; no client update or new configuration option is needed.
+
+## Install or upgrade the systemd service
 
 For an existing Ubuntu/Debian `caddy.service`, save the old binary and Caddyfile,
 install this binary separately at `/usr/local/bin/caddy-naivefox`, and validate
@@ -270,9 +312,12 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
 ## Configuration and limits
 
 The JSON handler name is `naivefox_transport`. Its required
-`application_root` string is an absolute path to a complete seven-file
-application. Relative, missing, unreadable, incomplete, symlink-escaping,
-concurrently changing or oversized bundles fail provisioning. Its `forward_proxy` object holds the ordinary
+`application_root` string is an absolute path to a complete public site containing
+the seven required transport files and any additional resources. Missing or
+relative roots and unreadable, incomplete, symlink-escaping, concurrently changing
+or oversized required files fail provisioning. Extra files are not part of that
+validation; request-time reads are confined to the root and reject special files.
+Its `forward_proxy` object holds the ordinary
 forwardproxy options without a second `handler` field. Credentials
 must be configured; a missing list or an entirely empty username/password pair
 fails validation: the native classic client sends no authentication for an
@@ -281,7 +326,8 @@ the Caddyfile keeps the ordinary forwardproxy parser's username rules. Use a
 strong password and HTTPS with certificate validation. Keep private
 configs, logs, TLS keys and captures outside Git.
 
-For migration, upgrade both server and client. Remove server `key` and
+For migration from old key-based transport versions, upgrade both server and
+client. Remove server `key` and
 `allowed_targets`, nest `forward_proxy` as above, and remove client
 `no-connect-key`. Keep the proxy URL. Obsolete server settings fail explicitly,
 even when empty; they are never ignored. Old key-based servers lack the new
@@ -324,7 +370,9 @@ The CI workflow runs both suites, builds the combined binary, and runs the
 TLS cohosting test. That test loads the checked-in Caddyfile and external
 template, validates a local certificate without insecure TLS, exchanges
 no-connect frames over HTTP/2, and keeps padded classic H1 and H2 CONNECT
-tunnels to a distinct target host alive through the same Caddy process.
+tunnels to a distinct target host alive through the same Caddy process. It also
+serves additional site files from the single application root, checks live
+updates and verifies that static routing preserves the transport snapshot.
 
 Go race tests exercise framing, authorization, external application snapshots,
 filesystem validation, replay rejection, concurrent streams, both laboratory

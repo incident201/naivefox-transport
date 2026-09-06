@@ -146,11 +146,15 @@ jobs:
 
           Classic and no-connect cohosting requires both the hostless :443 site address and the named proxy hostname shown in the README. A hostname-only route cannot receive classic CONNECT requests whose authority names the destination.
 
-          This release supports classic (default in NaiveFox) and the promoted no-connect transport. No-connect now uses native-stream-v1 startup followed by shaped nfc1.stream.v1 WebSocket messages. Upgrade both ends; old finite and hybrid/asymmetric selectors are retired. Download and verify naivefox-application-template-v1.tar.gz, customize a copy under the documented fixed contract, and set application_root to its absolute path. The Caddy binary no longer embeds a fallback application; missing or invalid bundles fail validation.
+          Set application_root to one absolute directory containing the complete public site: index.html, the six required assets, and all additional pages, scripts, fonts, images and downloads. No separate root or file_server directive is needed. The seven required files retain their transport size/format contract and are served from memory; extras are read from disk on GET/HEAD. Reload after changing required files or replacing the root directory. Additional file changes do not require reload. Missing or invalid required files reject validation; there is no built-in fallback site.
+
+          See the [directory layout and complete Caddyfile](https://github.com/$GH_REPO/blob/$SOURCE_SHA/README.md#site-directory-and-caddyfile). When upgrading a split-directory setup, move the extra public files into application_root at their existing relative paths and remove the separate site root/file_server configuration. This site-layout change requires the updated server binary, not a client update.
+
+          Classic remains the default. Current no-connect uses native-stream-v1 startup followed by nfc1.stream.v1 WebSocket messages. Only migrations from retired finite or hybrid/asymmetric transports require upgrading both client and server.
 
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 
-          Download the binary and application template with both checksum files, verify each with sha256sum --check, and follow the README for installation and the required application_root migration. Certificates and the systemd service do not need to be reinstalled.
+          Download the binary and application template with both checksum files and verify each with sha256sum --check. Customize the template, add the rest of your site into the same directory and follow the README for installation. Keep the existing certificate storage and configure the service to use the combined binary.
 
           Build and runtime checks passed in this workflow before publication.
           EOF

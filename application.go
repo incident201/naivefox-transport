@@ -41,7 +41,8 @@ type applicationAsset struct {
 }
 
 type applicationFiles struct {
-	assets map[string]applicationAsset
+	assets    map[string]applicationAsset
+	directory *os.Root
 }
 
 func assetDefinition(path string) (assetSpec, bool) {
@@ -123,7 +124,7 @@ func paddedApplicationAsset(body []byte, capacity int) []byte {
 	return padded
 }
 
-func loadApplication(root string) (applicationFiles, error) {
+func loadApplication(root string) (application applicationFiles, err error) {
 	if root == "" {
 		return applicationFiles{}, errors.New("application_root is required")
 	}
@@ -134,7 +135,11 @@ func loadApplication(root string) (applicationFiles, error) {
 	if err != nil {
 		return applicationFiles{}, fmt.Errorf("application_root: %w", err)
 	}
-	defer directory.Close()
+	defer func() {
+		if err != nil {
+			directory.Close()
+		}
+	}()
 
 	sources, err := readApplicationSources(directory)
 	if err != nil {
@@ -155,7 +160,7 @@ func loadApplication(root string) (applicationFiles, error) {
 		}
 	}
 
-	application := applicationFiles{assets: make(map[string]applicationAsset, len(applicationAssetSpecs))}
+	application = applicationFiles{assets: make(map[string]applicationAsset, len(applicationAssetSpecs)), directory: directory}
 	for _, spec := range applicationAssetSpecs {
 		application.assets[spec.path] = applicationAsset{
 			body: paddedApplicationAsset(sources[spec.path], spec.size),
@@ -168,4 +173,13 @@ func loadApplication(root string) (applicationFiles, error) {
 func (application applicationFiles) asset(path string) (applicationAsset, bool) {
 	asset, ok := application.assets[path]
 	return asset, ok
+}
+
+// close releases the directory retained for live static files. The seven
+// transport assets remain an immutable snapshot independent of this handle.
+func (application applicationFiles) close() error {
+	if application.directory != nil {
+		return application.directory.Close()
+	}
+	return nil
 }

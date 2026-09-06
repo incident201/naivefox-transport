@@ -332,6 +332,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	if !bytes.Equal(echoed, message) {
 		t.Fatal("WebSocket payload mismatch")
 	}
+	checkCombinedApplicationSite(t, client, origin, templateRoot)
 	checkClassic("classic remains connected through no-connect")
 	checkClassicH2("classic h2 remains connected through no-connect")
 }
@@ -414,4 +415,110 @@ func testCertificate(t *testing.T, dir string) (string, string, *x509.CertPool) 
 		t.Fatal("fixture certificate")
 	}
 	return certFile, keyFile, roots
+}
+
+// Verify the complete site through the real TLS route, while both classic
+// tunnels and no-connect remain open. Only application_root configures files.
+func checkCombinedApplicationSite(t *testing.T, shared *http.Client, origin, root string) {
+	t.Helper()
+	client := *shared
+	client.Jar = nil
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	fetch := func(method, path string, headers http.Header) (*http.Response, []byte) {
+		t.Helper()
+		request, err := http.NewRequest(method, origin+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if headers != nil {
+			request.Header = headers.Clone()
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.ProtoMajor != 2 {
+			t.Fatalf("static TLS response: protocol=%s error=%v", response.Proto, err)
+		}
+		return response, body
+	}
+
+	payload := bytes.Repeat([]byte{0, 255, 1, 2}, 128*1024)
+	writeApplicationFile(t, root, "browser/download.bin", payload)
+	writeApplicationFile(t, root, "browser/page/index.html", []byte("<h1>Browser page</h1>"))
+	response, body := fetch("GET", "/browser/download.bin?v=1", nil)
+	if response.StatusCode != 200 || !bytes.Equal(body, payload) ||
+		response.Header.Get("Content-Type") != "application/octet-stream" ||
+		response.Header.Get("Last-Modified") == "" || response.Header.Get("Set-Cookie") != "" ||
+		response.Header.Get("X-App-Profile") != "" || response.Header.Get("X-App-Capacity") != "" {
+		t.Fatal("extra binary file failed through the single-root TLS route")
+	}
+	modified := response.Header.Get("Last-Modified")
+	response, body = fetch("HEAD", "/browser/download.bin", nil)
+	if response.StatusCode != 200 || len(body) != 0 || response.ContentLength != int64(len(payload)) {
+		t.Fatal("static HEAD through TLS")
+	}
+	response, body = fetch("GET", "/browser/download.bin", http.Header{"Range": {"bytes=2-5"}})
+	if response.StatusCode != 206 || !bytes.Equal(body, payload[2:6]) {
+		t.Fatal("static Range through TLS")
+	}
+	response, body = fetch("GET", "/browser/download.bin", http.Header{"If-Modified-Since": {modified}})
+	if response.StatusCode != 304 || len(body) != 0 {
+		t.Fatal("conditional static request through TLS")
+	}
+	response, _ = fetch("GET", "/browser/page?x=1%2F2", nil)
+	if response.StatusCode != 308 || response.Header.Get("Location") != "/browser/page/?x=1%2F2" {
+		t.Fatal("directory redirect through TLS")
+	}
+	response, body = fetch("GET", "/browser/page/", nil)
+	if response.StatusCode != 200 || string(body) != "<h1>Browser page</h1>" {
+		t.Fatal("nested page through TLS")
+	}
+	response, _ = fetch("GET", "/browser/", nil)
+	if response.StatusCode != 404 {
+		t.Fatal("directory listing exposed through TLS")
+	}
+	writeApplicationFile(t, root, "browser/download.bin", []byte("live replacement"))
+	response, body = fetch("GET", "/browser/download.bin", nil)
+	if response.StatusCode != 200 || string(body) != "live replacement" {
+		t.Fatal("static update required a reload")
+	}
+	if err := os.Remove(filepath.Join(root, "browser", "download.bin")); err != nil {
+		t.Fatal(err)
+	}
+	response, _ = fetch("GET", "/browser/download.bin", nil)
+	if response.StatusCode != 404 {
+		t.Fatal("deleted file remained available through TLS")
+	}
+	_, snapshot := fetch("GET", "/assets/app.js", nil)
+	writeApplicationFile(t, root, "assets/app.js", []byte("changed after startup"))
+	response, _ = fetch("GET", "/assets/%2e/app.js?v=2", nil)
+	if response.StatusCode != 308 || response.Header.Get("Location") != "/assets/app.js?v=2" {
+		t.Fatal("encoded asset alias did not return to the transport route")
+	}
+	response, body = fetch("GET", response.Header.Get("Location"), nil)
+	if response.StatusCode != 200 || len(body) != scriptCapacity || !bytes.Equal(body, snapshot) {
+		t.Fatal("static routing bypassed the transport snapshot")
+	}
+	writeApplicationFile(t, root, "index.html", []byte("changed after startup"))
+	response, _ = fetch("GET", "/index.html?v=2", nil)
+	if response.StatusCode != 308 || response.Header.Get("Location") != "/?v=2" {
+		t.Fatal("root index did not redirect to the handshake")
+	}
+	response, body = fetch("GET", response.Header.Get("Location"), nil)
+	if response.StatusCode != 200 || len(body) != rootCapacity ||
+		!bytes.Contains(body, []byte("actual external application")) ||
+		response.Header.Get("X-App-Profile") != defaultProfile {
+		t.Fatal("root index bypassed the handshake snapshot")
+	}
+	const forbidden = "static file must not shadow transport"
+	for _, path := range []string{"api/sync", "api/realtime", "api/events/brief", "api/events/state", "media/chunk/0", "__lab/stats"} {
+		writeApplicationFile(t, root, path, []byte(forbidden))
+		response, body = fetch("GET", "/"+path, nil)
+		if response.StatusCode == 200 || bytes.Contains(body, []byte(forbidden)) {
+			t.Fatalf("file shadowed reserved TLS route /%s", path)
+		}
+	}
 }

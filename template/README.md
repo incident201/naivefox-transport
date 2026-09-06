@@ -1,28 +1,52 @@
-# NaiveFox application template
+# NaiveFox site directory
 
-Copy this directory, edit the seven public files, point `application_root` at
-the copy, and start or restart Caddy. No generator, manifest compiler, watcher,
-or per-request filesystem access is required.
+`application_root` is the **single directory containing the complete public
+site**, including `index.html`, `assets/` and every additional resource.
+The supplied template is a starting point; the seven required files are not
+a limit on the number of files.
 
-The plugin opens the directory through a confined root, reads every required
-file twice during provisioning, and accepts only two identical, complete
-snapshots. It rejects missing files, symlinks, directories, devices, FIFOs,
-oversized content, invalid UTF-8, malformed SVG, and an incomplete resource
-graph. Successful provisioning pads the responses to their fixed capacities and
-serves the resulting immutable in-memory snapshot.
+## Directory layout
 
-## Quick start
+```text
+/etc/caddy/naivefox-applications/atlas-v1/
+├── index.html                 # required
+├── assets/
+│   ├── site.css               # required
+│   ├── app.js                 # required
+│   ├── image-1.svg            # required
+│   ├── image-2.svg            # required
+│   ├── image-3.svg            # required
+│   ├── image-4.svg            # required
+│   ├── extra.js               # optional example
+│   └── fonts/
+│       └── body.woff2         # optional example
+├── pages/
+│   └── about/
+│       └── index.html         # optional example
+└── favicon.ico                # optional example
+```
+
+Add other HTML pages, scripts, styles, fonts, images and downloads anywhere in
+this tree. For example, `assets/extra.js` is served at `/assets/extra.js`;
+`pages/about/index.html` is served at `/pages/about/`. No generator, manifest,
+second root or separate `file_server` is needed. Keep private configuration,
+logs and keys outside this public directory.
+
+## Install and configure
+
+Customize the template and add your site's remaining files before copying it:
 
 ```sh
 cd /path/to/application-template
 sudo install -d -o root -g caddy -m 0750 /etc/caddy/naivefox-applications/atlas-v1
-sudo cp -a ./index.html ./assets /etc/caddy/naivefox-applications/atlas-v1/
+sudo cp -a ./. /etc/caddy/naivefox-applications/atlas-v1/
 sudo chown -R root:caddy /etc/caddy/naivefox-applications/atlas-v1
 sudo find /etc/caddy/naivefox-applications/atlas-v1 -type d -exec chmod 0750 {} +
 sudo find /etc/caddy/naivefox-applications/atlas-v1 -type f -exec chmod 0640 {} +
 ```
 
-Configure the combined handler:
+Save this as **`/etc/caddy/Caddyfile`**, outside the site directory. Replace
+`proxy.example.com`, `USER` and `PASSWORD`; keep `:443`:
 
 ```caddyfile
 :443, proxy.example.com {
@@ -41,29 +65,29 @@ Configure the combined handler:
 }
 ```
 
-Keep the hostless `:443` address. Classic CONNECT uses the destination as its
-HTTP authority, while the named address is needed for certificate automation.
+`application_root` points to the directory containing `index.html`.
+No extra `root` or `file_server` block is required. Keep the hostless `:443`
+address for classic CONNECT and the named address for certificate automation.
+Move any existing `forward_proxy` block inside `naivefox_transport`, preserving
+its options; do not keep a duplicate standalone block.
 
-After copying or editing the complete application, an ordinary systemd restart
-is sufficient:
-
-```sh
-sudo systemctl restart caddy
-sudo systemctl status caddy --no-pager
-```
-
-The plugin performs all application validation during startup. A reload is
-safer when the service supports it, because Caddy keeps the running
-configuration if the new bundle is invalid:
+Use the combined Caddy binary containing both proxy modules. After installing
+it at `/usr/local/bin/caddy-naivefox` and configuring `caddy.service` to use it:
 
 ```sh
+sudo -u caddy /usr/local/bin/caddy-naivefox validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
 
+Reload only after successful validation. For a first start use
+`sudo systemctl start caddy`; if reload is unavailable, restart the service.
+See [binary installation and service setup](https://github.com/incident201/naivefox-transport#install-or-upgrade-the-systemd-service).
+The repository's `examples/Caddyfile` provides the same configuration using
+four environment variables documented in that file.
+
 ## Fixed public contract
 
-The paths, response capacities and MIME types are part of the native client
-contract:
+Only these seven files have transport size and format requirements:
 
 | Route | Source | Maximum source size | Wire size | Content-Type |
 | --- | --- | ---: | ---: | --- |
@@ -75,33 +99,54 @@ contract:
 | `/assets/image-3.svg` | `assets/image-3.svg` | 8192 | 8192 | `image/svg+xml` |
 | `/assets/image-4.svg` | `assets/image-4.svg` | 8192 | 8192 | `image/svg+xml` |
 
-Every source must be a nonempty, NUL-free UTF-8 regular file. Each SVG must
-contain complete `<svg>...</svg>` markup. The root document must reference
-each of the six asset paths exactly once. Query strings may be added for browser
-cache busting, for example `/assets/app.js?v=atlas-v2`.
+Each required file must be nonempty, NUL-free UTF-8 and a regular file, not
+a symlink. SVG files must contain complete `<svg>...</svg>` markup.
+`index.html` must reference each of the six fixed asset paths exactly once;
+references to additional resources are allowed. Query strings are allowed,
+for example `/assets/app.js?v=2`.
 
-The server pads unused capacity with ASCII spaces. Do not pre-pad files to their
-wire size.
+At startup/reload the module reads the required files twice, validates that
+both reads match, and pads their responses with ASCII spaces to the wire sizes.
+Do not pre-pad files. Missing, invalid, oversized or changing required files
+reject startup/reload. There is no built-in fallback site.
 
-## Customization boundary
+The JavaScript is ordinary site code, served without injected transport code
+or required markers. NaiveFox fetches the seven resources without executing
+JavaScript; a normal browser runs your site and loads its additional resources.
 
-The production `assets/app.js` is served verbatim before padding. It has no
-NaiveFox markers, injected profile, NFC1 codec, carrier endpoint names, or
-required transport globals. You may replace it with any ordinary JavaScript
-that fits the size bound. The same applies to HTML, CSS and the four SVGs.
+## Additional files and routes
 
-Native no-connect does not execute this JavaScript. It independently performs
-the fixed HTTPS startup and carrier graph. A normal browser does execute your
-application, so added fonts, imports, images, fetches or WebSockets change that
-browser's request graph. That can be intentional for a real application, but it
-is then a new camouflage profile that should be measured rather than assumed
-equivalent to the supplied seven-resource template.
+Additional files are read from disk on GET/HEAD, with no transport size,
+UTF-8, SVG or padding requirements. Binary and empty files work. Responses
+support Content-Type, Content-Length, Last-Modified, conditional requests and
+Range, with `Cache-Control: no-cache` for revalidation. These requests do not
+create transport sessions.
 
-Extra ordinary files can be served by a later Caddy `file_server`. They are
-outside the validated no-connect resource graph. Keep `application_root`
-outside that public file-server root.
+Directories with `index.html` redirect to a trailing slash and serve that page.
+There is no directory listing or automatic SPA fallback. Missing files and
+unsupported static methods continue through forwardproxy to the next handler;
+the example returns 404.
 
-For updates, finish writing a new directory before changing
-`application_root` or restarting the service. The plugin does not watch files;
-editing the active directory has no effect until the next successful
-start/reload.
+Files cannot shadow `/`, the six fixed asset URLs, `/api/sync`,
+`/api/realtime`, `/api/events/brief`, `/api/events/state`,
+`/media/chunk/*` or `/__lab/*`. `/index.html` redirects to `/`.
+Normalized URL aliases cannot bypass transport routing; redirects preserve
+query strings. Do not put a compression handler around transport routes.
+Reads stay inside the root, including relative symlink targets. Escaping
+symlinks, traversal paths and special files are rejected.
+
+## Updates
+
+| Change | Action |
+| --- | --- |
+| Edit any of the seven required files | Validate, then reload/restart |
+| Add, edit or delete an additional file | No reload; subsequent requests read disk |
+| Replace the root directory or change `application_root` | Validate, then reload/restart |
+
+The seven responses stay in memory even if their source files are edited or
+removed. The module also retains a handle to its root directory, so renaming
+or replacing the directory does not switch a running module to a new one.
+
+Replace individual additional files atomically to avoid partial reads. For
+a consistent whole-site update, prepare a new complete directory, change
+`application_root` and reload. A failed reload preserves the running site.

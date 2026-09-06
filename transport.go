@@ -130,10 +130,11 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return fmt.Errorf("load application: %w", err)
 	}
-	t.application = application
 	if err := t.provisionForwardProxy(ctx); err != nil {
+		application.close()
 		return err
 	}
+	t.application = application
 	t.sessions = make(map[string]*session)
 	t.stats = counters{Requests: make(map[string]uint64), Protocols: make(map[string]uint64), CellCapacities: make(map[string]uint64)}
 	t.stop = make(chan struct{})
@@ -168,7 +169,8 @@ func (t *Transport) expire(now time.Time) {
 	}
 }
 
-func (t *Transport) Cleanup() error {
+func (t *Transport) Cleanup() (err error) {
+	defer func() { err = errors.Join(err, t.application.close()) }()
 	if t.stop != nil {
 		close(t.stop)
 		<-t.done
@@ -306,9 +308,11 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	path := r.URL.Path
 	_, isAsset := t.application.asset(path)
-	carrier := path == "/api/sync" || path == "/api/events/brief" ||
-		path == "/api/events/state" || strings.HasPrefix(path, "/media/chunk/")
+	carrier := isCarrierPath(path)
 	if !isAsset && !carrier {
+		if handled, err := t.application.serveStatic(w, r); handled {
+			return err
+		}
 		return t.ForwardProxy.ServeHTTP(w, r, next)
 	}
 	methodLabel, pathLabel, protocolLabel := r.Method, path, r.Proto

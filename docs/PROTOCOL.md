@@ -35,8 +35,15 @@ Caddy reads and validates the fixed seven public files twice, requires two
 identical complete snapshots, pads every response to the capacities above, and
 retains one immutable memory snapshot. Missing, relative, unreadable, malformed,
 special, symlinked, concurrently changing or oversized bundles fail
-provisioning. HTTP requests never read application files from disk. The
-production JavaScript is served verbatim before padding and has no injected
+provisioning. Requests for these seven transport resources never read their
+source files from disk. Additional ordinary site resources are served on
+GET/HEAD directly from the same `application_root`, without creating transport
+sessions or changing NFC1. They are read on each request and have ordinary
+static HTTP semantics; their contents and sizes are outside the fixed transport
+contract. Existing transport/diagnostic URLs retain priority over files, and
+`/index.html` redirects to the snapshot at `/`. Changes to the seven required
+files or replacement of the root directory require reload/restart.
+The production JavaScript is served verbatim before padding and has no injected
 profile, NFC1 runtime, carrier endpoint names or required markers. File contents
 may be customized, while the paths, capacities, MIME types and root resource
 references remain fixed. See [the template contract](../template/README.md).
@@ -197,8 +204,11 @@ session resumption or credential replay.
 Classic remains the client's default and uses the unchanged ordinary
 forward-proxy implementation. No-connect is the only alternate transport.
 Old finite HTTP profiles and the hybrid/asymmetric subprotocols are rejected.
-The server requires the external seven-file application even when serving
-both transports on one listener. Omit `profile` or set `native-stream-v1`.
+Both transports share one listener and one `application_root`: the complete
+public site containing the seven required transport files and all additional
+resources. No separate site `root` or `file_server` is needed. See the
+[directory layout and complete Caddyfile](../README.md#site-directory-and-caddyfile).
+Omit `profile` or set `native-stream-v1`.
 
 Diagnostics are disabled unless explicitly enabled. Private statistics
 retain bounded request labels, directional cell counts, useful/filler byte
