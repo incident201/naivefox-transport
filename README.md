@@ -266,7 +266,7 @@ The JSON handler name is `naivefox_transport`. Its required
 `application_root` string is an absolute path to a complete public site containing
 index.html, its selected resources and any additional site files. Missing or
 relative roots and unreadable, incomplete, symlink-escaping, concurrently changing
-or oversized required files fail provisioning. Extra files are not part of that
+required files fail provisioning; file sizes are advisory operator choices. Extra files are not part of that
 validation; request-time reads are confined to the root and reject special files.
 Its `forward_proxy` object holds the ordinary
 forwardproxy options without a second `handler` field. Credentials

@@ -166,4 +166,4 @@ jobs:
             dist/naivefox-application-template-v2.tar.gz.sha256 \
             dist/build-info.json \
             --target "$SOURCE_SHA" --title "Caddy 2.11.2 + NaiveFox transport ($RELEASE_TAG)" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md --latest
