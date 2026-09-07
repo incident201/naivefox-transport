@@ -94,8 +94,9 @@ At startup/reload, the module reads `index.html`, derives its selected
 inventory and loads those files into an immutable memory snapshot. It verifies
 the sources again before publication; verification uses a streaming read.
 Selected bytes and MIME types are served identically to browsers and native
-clients. Responses carry their actual Content-Length and the same
-`X-App-Site` snapshot identity. There is no client-specific HTML or script
+clients. Responses carry their actual Content-Length and no X-App-* headers.
+Snapshot identity is confirmed inside the authenticated carrier using the
+document and resource body digests, URLs, kinds and MIME types. There is no client-specific HTML or script
 injection.
 
 Validation/startup logs report startup_resources, bootstrap_body_bytes and
@@ -112,8 +113,8 @@ preserving the running valid configuration.
 | Other site files | Confined disk reads on GET/HEAD | Next request |
 | Replacement of the root directory | Open directory handle | Successful reload/restart |
 
-A client that sees different snapshot identities during one bootstrap fails
-without an automatic refetch loop. The identity provides consistency, not a
+A client whose downloaded site differs from the authenticated server snapshot
+fails before target opening without an automatic refetch loop. The identity provides consistency, not a
 secret or a replacement for TLS/authentication.
 
 The root is not cacheable. Selected public resources retain ordinary server

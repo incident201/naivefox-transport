@@ -152,7 +152,7 @@ jobs:
 
           See the [site requirements and size recommendations](https://github.com/$GH_REPO/blob/$SOURCE_SHA/docs/SITE.md) and [complete Caddyfile](https://github.com/$GH_REPO/blob/$SOURCE_SHA/README.md#site-directory-and-caddyfile).
 
-          Upgrade both NaiveFox and this server for native-stream-v2. Older native-stream-v1 peers fail closed. The twenty API pairs, NFC1 stream framing and nfc1.stream.v1 WebSocket subprotocol are unchanged. Classic remains the default and uses the same credentials and destination policy.
+          Upgrade both NaiveFox and this server together. Only current native-stream-v2 is supported. Public responses contain no X-App-* headers. The first carrier pair authenticates and privately confirms the contract and streamed site digest before OPEN. Anonymous API/WebSocket requests use normal site fallback. The twenty startup pairs and shaped WebSocket remain; classic remains the default with shared credentials and policy.
 
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 

@@ -15,8 +15,8 @@ func TestUntrustedRequestLabelsRemainBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer module.Cleanup()
-	next := caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error {
-		t.Fatal("carrier route unexpectedly delegated")
+	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error {
+		w.WriteHeader(404)
 		return nil
 	})
 	const requests = 4096
@@ -24,7 +24,7 @@ func TestUntrustedRequestLabelsRemainBounded(t *testing.T) {
 		r := testRequest("UNSUPPORTED"+strconv.Itoa(index), "https://localhost/media/chunk/"+strconv.Itoa(index), nil)
 		r.Proto = "UNKNOWN/" + strconv.Itoa(index)
 		w := httptest.NewRecorder()
-		if err := module.ServeHTTP(w, r, next); err != nil || w.Code != 400 {
+		if err := module.ServeHTTP(w, r, next); err != nil || w.Code != 404 {
 			t.Fatalf("unauthenticated request %d: %v, %d", index, err, w.Code)
 		}
 	}
@@ -33,7 +33,7 @@ func TestUntrustedRequestLabelsRemainBounded(t *testing.T) {
 	}
 	for _, path := range []string{"/media/chunk/6", "/media/chunk/17", "/api/events/brief"} {
 		w := httptest.NewRecorder()
-		if err := module.ServeHTTP(w, testRequest("GET", "https://localhost"+path, nil), next); err != nil || w.Code != 400 {
+		if err := module.ServeHTTP(w, testRequest("GET", "https://localhost"+path, nil), next); err != nil || w.Code != 404 {
 			t.Fatal("unauthenticated GET changed behavior")
 		}
 	}

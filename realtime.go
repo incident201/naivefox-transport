@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/gorilla/websocket"
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
@@ -54,7 +55,7 @@ func (w *observedResponse) Unwrap() http.ResponseWriter { return w.ResponseWrite
 func (s *session) beginHTTP(w http.ResponseWriter, r *http.Request) (*observedResponse, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.realtime || s.startupSteps >= 40 {
+	if s.realtime || s.startupInvalid || s.startupSteps >= 40 {
 		return nil, false
 	}
 	s.httpActive++
@@ -95,13 +96,18 @@ func (t *Transport) finishHTTP(s *session, w *observedResponse, r *http.Request)
 	}
 }
 
-func (t *Transport) realtime(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet || r.ProtoMajor != 1 || r.TLS == nil {
-		t.reject(w)
-		return nil
-	}
+func (t *Transport) realtime(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	s, err := t.getSession(w, r)
 	if err != nil {
+		return t.decline(w, r, next)
+	}
+	s.mu.Lock()
+	authed := s.authed
+	s.mu.Unlock()
+	if !authed {
+		return t.decline(w, r, next)
+	}
+	if r.Method != http.MethodGet || r.ProtoMajor != 1 || r.TLS == nil {
 		t.reject(w)
 		return nil
 	}
@@ -199,7 +205,7 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	}
 	useful, opens := uint64(0), uint64(0)
 	for _, frame := range frames {
-		if frame.Kind == cell.Auth || frame.Kind == cell.Ack || frame.Stream == 0 {
+		if frame.Kind == cell.Auth || frame.Kind == cell.Ack || frame.Kind == cell.Hello || frame.Stream == 0 {
 			return errors.New("realtime control")
 		}
 		if frame.Kind == cell.Data {

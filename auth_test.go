@@ -32,7 +32,7 @@ func TestInvalidAuthenticationCannotOpenLiveTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Cleanup()
-	next := caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error { t.Fatal("unexpected fallback"); return nil })
+	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(404); return nil })
 	for _, authorization := range []string{"", "Basic ", "Basic " + string(forwardproxy.EncodeAuthCredentials("fixture", "wrong")), "Basic " + string(forwardproxy.EncodeAuthCredentials("", ""))} {
 		root := httptest.NewRecorder()
 		m.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
@@ -47,7 +47,7 @@ func TestInvalidAuthenticationCannotOpenLiveTarget(t *testing.T) {
 		r := testRequest("POST", "https://localhost/api/sync", bytes.NewReader(body))
 		r.AddCookie(root.Result().Cookies()[0])
 		w := httptest.NewRecorder()
-		if err := m.ServeHTTP(w, r, next); err != nil || w.Code != 400 {
+		if err := m.ServeHTTP(w, r, next); err != nil || w.Code != 404 {
 			t.Fatalf("invalid auth was not rejected: %d %v", w.Code, err)
 		}
 	}

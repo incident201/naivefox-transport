@@ -156,7 +156,8 @@ func loadApplication(root string) (application applicationFiles, err error) {
 	application = applicationFiles{assets: map[string]applicationAsset{"/": {body: body, mime: "text/html; charset=utf-8"}}, resources: resources, directory: directory, bodyBytes: uint64(len(body))}
 	h := sha256.New()
 	snapshotField(h, []byte("naivefox-site-v2"))
-	snapshotField(h, body)
+	rootDigest := sha256.Sum256(body)
+	snapshotField(h, rootDigest[:])
 	for _, resource := range resources {
 		asset, exists := application.assets[resource.Path]
 		if !exists {
@@ -183,8 +184,13 @@ func loadApplication(root string) (application applicationFiles, err error) {
 		application.bodyBytes += uint64(len(asset.body))
 		snapshotField(h, []byte(resource.URI))
 		snapshotField(h, []byte(resource.Kind))
-		snapshotField(h, []byte(asset.mime))
-		snapshotField(h, asset.body)
+		typ, _, mimeErr := mime.ParseMediaType(asset.mime)
+		if mimeErr != nil {
+			return applicationFiles{}, mimeErr
+		}
+		snapshotField(h, []byte(typ))
+		digest := sha256.Sum256(asset.body)
+		snapshotField(h, digest[:])
 	}
 	for resourcePath, asset := range application.assets {
 		name := strings.TrimPrefix(resourcePath, "/")

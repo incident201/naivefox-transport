@@ -134,7 +134,7 @@ func TestHTMLSiteQueryDedupAndSelectedSnapshot(t *testing.T) {
 		t.Fatal("query variants must count actual response bytes")
 	}
 	first := requestApplicationSite(t, m, "GET", "/app.js?v=1", nil)
-	if first.Header().Get("X-App-Site") != m.application.identity || first.Body.String() != "// source" {
+	if first.Header().Get("X-App-Site") != "" || first.Body.String() != "// source" {
 		t.Fatal("selected representation identity")
 	}
 	if err := os.Remove(filepath.Join(root, "app.js")); err != nil {

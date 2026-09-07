@@ -116,7 +116,7 @@ func TestCombinedCaddyTLS(t *testing.T) {
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
-			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || !bytes.Equal(body, mustReadFile(t, filepath.Join(templateRoot, "index.html"))) || len(response.Header.Get("X-App-Site")) != 64 || !bytes.Contains(body, []byte("actual external application")) || response.Header.Get("X-App-Profile") != defaultProfile || response.Header.Get("X-App-Auth") != "basic" {
+			if readErr != nil || response.StatusCode != 200 || response.ProtoMajor != 2 || !bytes.Equal(body, mustReadFile(t, filepath.Join(templateRoot, "index.html"))) || response.Header.Get("X-App-Site") != "" || !bytes.Contains(body, []byte("actual external application")) || response.Header.Get("X-App-Profile") != "" || response.Header.Get("X-App-Auth") != "" {
 				t.Fatalf("origin handshake: status=%d protocol=%s length=%d read=%v", response.StatusCode, response.Proto, len(body), readErr)
 			}
 			break
@@ -246,8 +246,8 @@ func TestCombinedCaddyTLS(t *testing.T) {
 	}
 	io.Copy(io.Discard, response.Body)
 	response.Body.Close()
-	if response.Header.Get("X-App-Realtime") != "websocket-v1" {
-		t.Fatal("missing realtime advertisement")
+	if response.Header.Get("X-App-Realtime") != "" {
+		t.Fatal("public realtime advertisement")
 	}
 	for round := 0; round < 20; round++ {
 		var frames []cell.Frame
@@ -510,7 +510,7 @@ func checkCombinedApplicationSite(t *testing.T, shared *http.Client, origin, roo
 	response, body = fetch("GET", response.Header.Get("Location"), nil)
 	if response.StatusCode != 200 || len(body) == 0 ||
 		!bytes.Contains(body, []byte("actual external application")) ||
-		response.Header.Get("X-App-Profile") != defaultProfile {
+		response.Header.Get("X-App-Profile") != "" {
 		t.Fatal("root index bypassed the handshake snapshot")
 	}
 	const forbidden = "static file must not shadow transport"

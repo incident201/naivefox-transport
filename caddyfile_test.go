@@ -88,11 +88,8 @@ func TestProfileHandshakeAndCoexistingHandler(t *testing.T) {
 				if err := handler.ServeHTTP(w, testRequest("GET", "https://localhost"+path, nil), next); err != nil {
 					t.Fatal(err)
 				}
-				expected := ""
-				if path == "/" {
-					expected = defaultProfile
-				}
-				if w.Code != 200 || w.Header().Get("X-App-Profile") != expected || (path == "/" && w.Header().Get("X-App-Auth") != "basic") {
+				assertNoApplicationHeaders(t, w.Header())
+				if w.Code != 200 {
 					t.Fatalf("profile handshake on %s: %d %q", path, w.Code, w.Header().Get("X-App-Profile"))
 				}
 			}

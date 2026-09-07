@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -217,7 +218,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 		return nil, errors.New("closed transport")
 	default:
 	}
-	if cookie, err := r.Cookie("app_session"); err == nil {
+	if cookie, err := r.Cookie("session"); err == nil {
 		if s := t.sessions[cookie.Value]; s != nil && s.ip == ip {
 			s.mu.Lock()
 			s.last = time.Now()
@@ -283,7 +284,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	}
 	id := hex.EncodeToString(token)
 	t.sessions[id] = s
-	http.SetCookie(w, &http.Cookie{Name: "app_session", Value: id, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: "session", Value: id, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	return s, nil
 }
 
@@ -296,7 +297,7 @@ func (t *Transport) reject(w http.ResponseWriter) {
 
 func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if r.URL.Path == "/api/realtime" {
-		return t.realtime(w, r)
+		return t.realtime(w, r, next)
 	}
 	if strings.HasPrefix(r.URL.Path, "/__lab/") {
 		if !t.Diagnostics || r.URL.Path != "/__lab/stats" || r.Method != http.MethodGet || !t.authenticate([]byte(r.Header.Get("Authorization"))) {
@@ -340,27 +341,20 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	t.stats.Requests[methodLabel+" "+pathLabel]++
 	t.stats.Protocols[protocolLabel]++
 	t.mu.Unlock()
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if isAsset {
-		w.Header().Set("X-App-Site", t.application.identity)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if path != "/" {
 			w.Header().Set("Cache-Control", "public, max-age=3600")
 		}
-		if r.Method != "GET" {
-			t.reject(w)
-			return nil
+		if r.Method != "GET" && r.Method != "HEAD" {
+			return t.decline(w, r, next)
 		}
-		if path == "/" {
+		if path == "/" && r.Method == "GET" {
 			if _, err := t.getSession(w, r); err != nil {
 				t.reject(w)
 				return nil
 			}
-			// The native client must reject a different profile before sending
-			// authentication or opening streams: receive windows are not negotiated.
-			w.Header().Set("X-App-Profile", defaultProfile)
-			w.Header().Set("X-App-Auth", "basic")
-			w.Header().Set("X-App-Realtime", "websocket-v1")
 		}
 		asset, ok := t.application.asset(path)
 		if !ok {
@@ -368,14 +362,50 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		}
 		w.Header().Set("Content-Type", asset.mime)
 		w.Header().Set("Content-Length", strconv.Itoa(len(asset.body)))
+		if r.Method == "HEAD" {
+			w.WriteHeader(http.StatusOK)
+			return nil
+		}
 		_, err := w.Write(asset.body)
 		return err
 	}
 	s, err := t.getSession(w, r)
 	if err != nil {
-		t.reject(w)
-		return nil
+		return t.decline(w, r, next)
 	}
+	s.mu.Lock()
+	authed := s.authed
+	s.mu.Unlock()
+	if !authed && (path != "/api/sync" || r.Method != "POST") {
+		return t.decline(w, r, next)
+	}
+	var body []byte
+	var frames []cell.Frame
+	var sequence uint32
+	var filler int
+	if path == "/api/sync" && r.Method == "POST" {
+		body, err = io.ReadAll(io.LimitReader(r.Body, 4097))
+		var decodeErr error
+		sequence, frames, filler, decodeErr = cell.Decode(body)
+		valid := err == nil && decodeErr == nil && len(body) == 4096 && r.Context().Err() == nil
+		if !authed {
+			valid = valid && sequence == 0 && len(frames) == 1 &&
+				frames[0].Kind == cell.Auth && frames[0].Stream == 0 &&
+				frames[0].Sequence == 0 && t.authenticate(frames[0].Body)
+			if !valid {
+				r.Body = struct {
+					io.Reader
+					io.Closer
+				}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
+				return t.decline(w, r, next)
+			}
+		} else if !valid {
+			t.reject(w)
+			return nil
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	observer, ok := s.beginHTTP(w, r)
 	if !ok {
 		t.reject(w)
@@ -393,13 +423,11 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			t.reject(w)
 			return nil
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, int64(capacity+1)))
-		sequence, frames, filler, decodeErr := cell.Decode(body)
 		used := 0
 		for _, f := range frames {
 			used += f.Size()
 		}
-		if err != nil || decodeErr != nil || len(body) != capacity || used > capacity-cell.Header {
+		if used > capacity-cell.Header {
 			t.reject(w)
 			return nil
 		}
@@ -421,7 +449,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		useful, opens := uint64(0), uint64(0)
 		if len(frames) > 0 && frames[0].Kind == cell.Auth {
 			f := frames[0]
-			if s.authed || f.Stream != 0 || f.Sequence != 0 || !t.authenticate(f.Body) {
+			if s.authed || len(frames) != 1 || f.Stream != 0 || f.Sequence != 0 || !t.authenticate(f.Body) {
 				s.mu.Unlock()
 				t.reject(w)
 				return nil
@@ -429,7 +457,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			s.authed = true
 			frames = frames[1:]
 		}
-		if len(frames) > 0 && !s.authed {
+		if !s.authed || (len(frames) > 0 && s.startupSteps < 2) {
 			s.mu.Unlock()
 			t.reject(w)
 			return nil
@@ -479,7 +507,12 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) error {
 	s.mu.Lock()
-	frames := s.peer.Take(capacity - cell.Header)
+	var frames []cell.Frame
+	if s.down == 0 {
+		frames = []cell.Frame{{Kind: cell.Hello, Body: []byte(defaultProfile + "\n" + t.application.identity)}}
+	} else {
+		frames = s.peer.Take(capacity - cell.Header)
+	}
 	used, useful := 0, uint64(0)
 	for _, f := range frames {
 		used += f.Size()
@@ -501,7 +534,6 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	t.mu.Unlock()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	w.Header().Set("X-App-Capacity", strconv.Itoa(capacity))
 	_, err = w.Write(body)
 	if err != nil {
 		t.mu.Lock()
@@ -514,3 +546,10 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 var _ caddy.Provisioner = (*Transport)(nil)
 var _ caddy.CleanerUpper = (*Transport)(nil)
 var _ caddyhttp.MiddlewareHandler = (*Transport)(nil)
+
+func (t *Transport) decline(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	t.mu.Lock()
+	t.stats.Rejected++
+	t.mu.Unlock()
+	return next.ServeHTTP(w, r)
+}

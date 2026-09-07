@@ -47,7 +47,7 @@ func newRealtimeFixture(t *testing.T) *realtimeFixture {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != 200 || response.Header.Get("X-App-Realtime") != "websocket-v1" {
+	if response.StatusCode != 200 || response.Header.Get("X-App-Realtime") != "" {
 		t.Fatal("root handshake")
 	}
 	f.cookie = response.Cookies()[0]
@@ -84,6 +84,8 @@ func (f *realtimeFixture) bootstrap(auth bool, extra []cell.Frame) {
 			if auth {
 				frames = append(frames, cell.Frame{Kind: cell.Auth, Body: []byte(testAuthorization)})
 			}
+		}
+		if round == 1 {
 			frames = append(frames, extra...)
 		}
 		body, err := cell.Encode(f.up, 4096, frames)
@@ -95,7 +97,12 @@ func (f *realtimeFixture) bootstrap(auth bool, extra []cell.Frame) {
 		}
 		f.up++
 		status, response := f.request("GET", startupPath(round), nil)
-		seq, _, _, err := cell.Decode(response)
+		seq, received, _, err := cell.Decode(response)
+		if round == 0 && (len(received) != 1 || received[0].Kind != cell.Hello ||
+			received[0].Stream != 0 || received[0].Sequence != 0 ||
+			string(received[0].Body) != defaultProfile+"\n"+f.module.application.identity) {
+			f.t.Fatal("authenticated contract confirmation")
+		}
 		if status != 200 || err != nil || seq != f.down {
 			f.t.Fatalf("startup GET %d", round)
 		}
@@ -157,7 +164,7 @@ func TestRealtimeRequiresCompleteOrderedBootstrap(t *testing.T) {
 		if conn != nil {
 			conn.Close()
 		}
-		if err == nil || response == nil || response.StatusCode != 400 {
+		if err == nil || response == nil || response.StatusCode != 404 {
 			t.Fatal("early or invalid bootstrap accepted")
 		}
 	}
@@ -319,7 +326,17 @@ func TestRealtimeRejectsInvalidCellsAndAnonymousProxyFrames(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRealtimeFixture(t)
-			f.bootstrap(tc.auth, nil)
+			if !tc.auth {
+				conn, response, err := f.dial()
+				if conn != nil {
+					conn.Close()
+				}
+				if err == nil || response == nil || response.StatusCode != 404 {
+					t.Fatal("anonymous WebSocket was not delegated")
+				}
+				return
+			}
+			f.bootstrap(true, nil)
 			conn, _, err := f.dial()
 			if err != nil {
 				t.Fatal(err)
@@ -352,7 +369,7 @@ func TestRealtimeRejectsInvalidCellsAndAnonymousProxyFrames(t *testing.T) {
 
 func TestRealtimeCleanupClosesBlockedReader(t *testing.T) {
 	f := newRealtimeFixture(t)
-	f.bootstrap(false, nil)
+	f.bootstrap(true, nil)
 	conn, _, err := f.dial()
 	if err != nil {
 		t.Fatal(err)

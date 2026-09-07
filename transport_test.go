@@ -48,7 +48,11 @@ func TestStartupRejectsReplayAndMalformedEnvelope(t *testing.T) {
 			} else {
 				body[14] = 1
 			}
-			if status, _ := f.request("POST", "/api/sync", body); status != 400 {
+			expected := 404
+			if invalid == "replay" {
+				expected = 400
+			}
+			if status, _ := f.request("POST", "/api/sync", body); status != expected {
 				t.Fatal("invalid upload accepted")
 			}
 			if f.module.stats.Opens != 0 {

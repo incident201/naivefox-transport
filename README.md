@@ -45,14 +45,14 @@ mkdir -p "$HOME/caddy-naivefox-download"
 cd "$HOME/caddy-naivefox-download"
 curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/caddy-linux-amd64
 curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/caddy-linux-amd64.sha256
-curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/naivefox-application-template-v1.tar.gz
-curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/naivefox-application-template-v1.tar.gz.sha256
+curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/naivefox-application-template-v2.tar.gz
+curl -fLO https://github.com/incident201/naivefox-transport/releases/latest/download/naivefox-application-template-v2.tar.gz.sha256
 sha256sum -c caddy-linux-amd64.sha256
-sha256sum -c naivefox-application-template-v1.tar.gz.sha256
+sha256sum -c naivefox-application-template-v2.tar.gz.sha256
 chmod +x caddy-linux-amd64
 ./caddy-linux-amd64 list-modules | grep -E 'forward_proxy|naivefox_transport'
 mkdir application-template
-tar -xzf naivefox-application-template-v1.tar.gz -C application-template
+tar -xzf naivefox-application-template-v2.tar.gz -C application-template
 ```
 
 The binary includes standard Caddy modules and both proxy modules. If your
@@ -62,9 +62,8 @@ Caddy plugins are compiled into its executable; they are not separate `.so`
 files. You can replace the executable without reinstalling the service or
 deleting its configuration/certificate storage.
 
-This code began as an application-carrier experiment. Its history, optional
-browser/loopback bridge, external gallery template, and experimental profiles
-remain here for reproducibility. The template is a server deployment asset and
+This code began as an application-carrier experiment. Its history remains available in Git; the external gallery template remains
+a deployment example. The template is a server deployment asset and
 is never linked into the native lean NaiveFox client. The selected profile is
 `native-stream-v2`: other experimental
 profiles are not interchangeable with the native client. Historical bandwidth,
@@ -252,13 +251,18 @@ package upgrades do not overwrite the custom binary under `/usr/local/bin`.
 To roll back, restore the saved Caddyfile, remove only these two executable
 overrides, reload systemd, and restart the service with its original executable.
 
-The native client requires `X-App-Profile: native-stream-v2` and
-`X-App-Auth: basic` on the initial `GET /` response before it sends AUTH.
-These headers are emitted only for
-the root handshake, report the resolved profile even when configuration omits
-it, and prevent accidental use of a different credit window. Older experimental
-server binaries without the header must be upgraded for native no-connect.
-See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire contract and lifecycle.
+The public site sends no X-App-* transport headers. Root GET creates an
+ordinary Secure/HttpOnly session cookie; GET/HEAD serve the public snapshot.
+The first carrier POST contains AUTH alone; its following GET privately confirms
+the fixed native-stream-v2 contract and snapshot digest before any target OPEN.
+The client hashes actual public bodies while streaming, preserving snapshot
+consistency without a public site identifier. Anonymous API/WebSocket requests,
+malformed anonymous uploads and invalid credentials use normal site fallback.
+Empty anonymous NFC1 exchanges are not supported.
+
+Upgrade client and server together. Earlier implementations, including earlier
+binaries bearing the same contract name, are not supported.
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the exact contract.
 
 ## Configuration and limits
 
@@ -285,9 +289,7 @@ even when empty; they are never ignored. Old key-based servers lack the new
 Basic handshake and cannot accidentally receive a new client's credentials.
 
 The omitted `profile` resolves to `native-stream-v2`, with 512 KiB of
-receive credit per stream. An explicit profile must match the client. The
-experimental `append_mode` and other profiles are for historical tests, not
-native no-connect configuration. `stats_path` optionally writes counters on
+receive credit per stream. An explicit profile must match the client. Other profiles and legacy implementations are not supported. `stats_path` optionally writes counters on
 cleanup. All `/__lab/*` HTTP routes return 404 by default. The optional
 `diagnostics` flag enables only authenticated `GET /__lab/stats` for private
 fixtures; do not enable it on public multi-user deployments. It uses HTTP

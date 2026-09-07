@@ -118,7 +118,7 @@ func TestStalledUploadDoesNotBlockSessionLifecycle(t *testing.T) {
 			body.Close()
 			select {
 			case err := <-done:
-				if err != nil || upload.Code != 400 {
+				if err != nil || (upload.Code != 400 && upload.Code != 404) {
 					t.Fatalf("stale/cancelled upload accepted: status=%d error=%v", upload.Code, err)
 				}
 			case <-time.After(time.Second):

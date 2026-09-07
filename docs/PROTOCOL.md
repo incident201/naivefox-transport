@@ -1,27 +1,33 @@
 # Native no-connect contract (NFC1)
 
 This document describes the `native-stream-v2` profile shared by the
-Caddy module and the native lean NaiveFox client. Other profiles are laboratory
-variants documented in [EXPERIMENTS.md](EXPERIMENTS.md); they are not negotiated
-or silently substituted. `append_mode` must be false for the native client.
+Caddy module and the native lean NaiveFox client. Only its current implementation
+is supported. Upgrade both peers together; there is no negotiation or compatibility
+with earlier releases. Historical variants remain in Git history.
 
 ## Origin, session and authentication
 
 1. Connect to the configured HTTPS origin with ordinary certificate validation,
    using native strict HTTP/2 or HTTP/3. The later WebSocket phase uses H1 TLS/TCP.
-2. GET / returns the actual nonempty UTF-8 index.html body, X-App-Profile:
-   native-stream-v2, X-App-Auth: basic, X-App-Realtime: websocket-v1 and an
-   X-App-Site snapshot identity. The random app_session cookie is retained on
-   carrier requests. A mismatched profile is rejected before AUTH or target OPEN.
+2. GET / returns actual nonempty UTF-8 index.html and an ordinary random
+   Secure/HttpOnly session cookie. No public response contains X-App-* metadata.
+   HEAD is supported without creating a session. The cookie is retained on
+   carrier requests and bound to the client IP; it is not authentication.
 3. Discover all supported directly declared resources from that HTML and complete
    their GETs, at most six at a time. Names, number and body sizes come from the
    site; there is no site-byte budget or space padding. Bodies are streamed.
-   Every selected response must carry the same snapshot identity. Client caching
-   remains inhibited; there are no inter-carrier cache hits or shared requests.
-4. The first upload contains AUTH as its first frame. Stream and frame sequence
+   Each body is hashed while streaming. Client caching remains inhibited;
+   there are no inter-carrier cache hits or shared requests.
+4. The first upload contains exactly one AUTH frame and no other frames. Stream and frame sequence
    are zero; its body is ASCII Basic followed by standard padded Base64 of the
    URL-decoded username, colon and password. Credentials and forward-proxy policy
    are the same as classic. AUTH must fit its first 4096-byte cell.
+5. The first authenticated GET returns one HELLO frame (type 9, stream and
+   sequence zero), containing ASCII native-stream-v2, one LF and the lowercase
+   64-character snapshot digest. The client validates the complete response
+   and matching digest before OPEN. The server rejects proxy frames until
+   that first response completes. There is no version negotiation,
+   compatibility alias or separate transport secret.
 
 The [site contract](SITE.md) specifies supported markup, URL and MIME rules,
 advisory sizes, immutable in-memory public snapshots, ordinary extra files and
@@ -30,15 +36,19 @@ CSS/script/image bodies are leaves; the client neither recursively crawls
 dependencies nor executes a browser application.
 
 Snapshot identity is lowercase SHA-256. Hash length-prefixed fields in discovery
-order: the domain string naivefox-site-v2, root bytes, then each deduplicated
-resource's normalized request URI (including query, without fragment), kind
-(style/script/image), MIME string and body bytes. Each field is prefixed by its
+order: the domain string naivefox-site-v2, the 32 raw SHA-256 digest bytes of
+the root body, then each deduplicated resource's normalized request URI
+(including query, without fragment), kind (style/script/image), MIME type
+without parameters and 32 raw SHA-256 digest bytes of its body. Each field is prefixed by its
 unsigned 64-bit big-endian byte length. The identity detects mixed snapshots;
-it is public metadata, not authentication. Reload mismatch fails without replay.
+it is consistency metadata carried only after authentication. Reload mismatch
+fails before OPEN without replay.
 
-AUTH is accepted once per session and compared in constant time. Empty
-unauthenticated cells are permitted for ordinary visitors; they cannot open
-streams. Authentication is not a separate HMAC or encryption scheme: TLS
+AUTH is accepted once per session and compared in constant time. Anonymous
+carrier and WebSocket requests, including empty NFC1 cells, malformed uploads
+and invalid credentials, receive normal site fallback. They do not advance
+cell or startup sequences. No NFC1 response or WebSocket upgrade is available
+before successful authentication. Authentication is not a separate HMAC or encryption scheme: TLS
 protects the complete body, including credentials and payload. Filler comes from
 `crypto/rand`; there is no custom AEAD, payload obfuscation, or key negotiation.
 
@@ -81,6 +91,7 @@ length. Frames must exactly occupy the used prefix; filler contains no frames.
 | 5 | CREDIT | Four-byte positive byte grant; sequence zero |
 | 6 | AUTH | Basic authorization value; stream zero and sequence zero |
 | 7 | OPENED | Empty; sequence zero; server confirms a successful dial |
+| 9 | HELLO | Server-only first HTTP cell; stream/sequence zero; fixed contract and snapshot digest |
 
 Stream IDs are nonzero, monotonically increasing and never reused in a session.
 OPEN accepts any valid TCP `host:port`; no per-destination allowlist is required.
@@ -128,9 +139,9 @@ advancing the cell sequence; sequence validation remains atomic with dispatch.
 
 ## Startup and persistent carrier
 
-The supported profile is `native-stream-v2`. The client verifies the root
-profile, Basic authentication contract and WebSocket capability before AUTH
-or target opening. Root and all HTML-selected resources complete before the twenty ordered
+Only current `native-stream-v2` is supported. Public resources carry no
+transport declaration. The first POST authenticates and the first GET confirms
+the contract and snapshot; target opening starts with the second POST. Root and all HTML-selected resources complete before the twenty ordered
 POST/GET pairs. Each POST to `/api/sync` is exactly 4096 bytes; each GET uses
 the next fixed response slot:
 
@@ -139,7 +150,7 @@ the next fixed response slot:
 - twelve 65536-byte `/media/chunk/{round}` responses;
 - two final 8192-byte `/api/events/brief` responses.
 
-Useful frames displace fresh cryptographic filler. Complete HTTP status,
+Useful frames displace fresh cryptographic filler after the first pair. Complete HTTP status,
 body capacity, encoding, cell sequence and frame bounds are mandatory.
 There are no post-startup finite leases, bulk HTTP pipelines or idle long polls.
 
