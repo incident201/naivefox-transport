@@ -53,6 +53,7 @@ func TestPublicSurfaceAndAnonymousCarrierFallback(t *testing.T) {
 			method, path string
 			body         []byte
 		}{
+			{"GET", "/README.md", nil},
 			{"GET", "/api/events/brief", nil}, {"GET", "/api/events/state", nil},
 			{"GET", "/media/chunk/6", nil}, {"GET", "/api/realtime", nil},
 			{"POST", "/api/sync", empty}, {"POST", "/api/sync", wrong},

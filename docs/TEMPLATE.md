@@ -71,5 +71,5 @@ Keep both site addresses and move any existing forward_proxy block inside
 naivefox_transport. No additional root or file_server block is needed.
 Keep private keys, logs and configuration outside the public directory.
 Validate the complete site and Caddyfile, then reload the service.
-Both NaiveFox and the server require the v2 profile; do not upgrade just one
-side of an existing v1 no-connect deployment.
+Upgrade NaiveFox and the server together. Only the current native-stream-v2
+implementation is supported. This instruction is kept outside the public template.

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/forwardproxy"
 	"github.com/gorilla/websocket"
@@ -36,6 +37,7 @@ func newRealtimeFixture(t *testing.T) *realtimeFixture {
 	}
 	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(404); return nil })
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(context.WithValue(r.Context(), caddy.ReplacerCtxKey, caddy.NewReplacer()))
 		if err := module.ServeHTTP(w, r, next); err != nil {
 			t.Error(err)
 		}

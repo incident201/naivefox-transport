@@ -150,6 +150,8 @@ build graph.
 
 ## Site directory and Caddyfile
 
+The template archive contains only public site files; its
+[deployment instructions](docs/TEMPLATE.md) stay outside the public directory.
 Place the entire public site in one directory and point application_root to its
 index.html directory. The module loads index.html and every distinct supported
 resource directly declared in it into an immutable memory snapshot. There are
