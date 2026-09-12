@@ -47,7 +47,7 @@ jobs:
           assert b'FIELD ATLAS / OBSERVATORY' not in binary
           assert b'A small window into a changing world.' not in binary
           PY
-          NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run 'TestCombinedCaddy(TLS|RejectsInvalidExternalApplication)' -count=1 .
+          NAIVEFOX_CADDY_BIN="$PWD/artifacts/bin/caddy" bash tools/go.sh go test -race -run 'TestReleaseBinary' -count=1 .
       - name: Prepare binary, checksum, and provenance
         id: metadata
         env:
