@@ -24,11 +24,8 @@ func (c *observedHalfClose) CloseWrite() error {
 }
 
 func TestTinyFramesRespectByteWindowAndOrderedHalfClose(t *testing.T) {
-	const window = 2 * cell.Window
-	peer, err := NewWithWindow(nil, window)
-	if err != nil {
-		t.Fatal(err)
-	}
+	const window = cell.Window
+	peer := New(nil)
 	defer peer.Close()
 	app, pipe := net.Pipe()
 	defer app.Close()

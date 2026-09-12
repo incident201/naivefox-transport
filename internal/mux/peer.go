@@ -17,6 +17,7 @@ type DialFunc func(context.Context, string) (net.Conn, error)
 const streamChunk = 16 * 1024
 
 type Stats struct {
+	HTTP3         bool   `json:"http3,omitempty"`
 	WebSocket     bool   `json:"websocket,omitempty"`
 	StartupUp     uint32 `json:"startup_up,omitempty"`
 	StartupDown   uint32 `json:"startup_down,omitempty"`
@@ -78,22 +79,12 @@ type Peer struct {
 	changes chan struct{}
 }
 
-func New(dial DialFunc) *Peer {
-	peer, _ := NewWithWindow(dial, 0)
-	return peer
-}
+func New(dial DialFunc) *Peer      { return newPeer(dial, cell.Window) }
+func NewHTTP3(dial DialFunc) *Peer { return newPeer(dial, cell.HTTP3Window) }
 
-// NewWithWindow requires identical private configuration at both peers. Zero
-// retains the original window; only the bounded experimental double is allowed.
-func NewWithWindow(dial DialFunc, window uint32) (*Peer, error) {
-	if window == 0 {
-		window = cell.Window
-	}
-	if window != cell.Window && window != 2*cell.Window {
-		return nil, errors.New("unsupported receive window")
-	}
+func newPeer(dial DialFunc, window uint32) *Peer {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Peer{ctx: ctx, cancel: cancel, dial: dial, window: window, stats: Stats{ReceiveWindow: window}, streams: make(map[uint32]*stream), changes: make(chan struct{}, 1)}, nil
+	return &Peer{ctx: ctx, cancel: cancel, dial: dial, window: window, stats: Stats{ReceiveWindow: window}, streams: make(map[uint32]*stream), changes: make(chan struct{}, 1)}
 }
 
 func (p *Peer) notify() {

@@ -18,7 +18,7 @@ import (
 
 func provisionApplicationSite(t *testing.T, root string) *Transport {
 	t.Helper()
-	module := &Transport{ApplicationRoot: root, ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: root, Access: testAccess()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestApplicationStaticReservedRoutesAndFallback(t *testing.T) {
 			t.Fatalf("fallback %s: %d %v", tc.method, response.Code, err)
 		}
 	}
-	if fallbacks != 4 || module.stats.Connect != 1 {
+	if fallbacks != 4 {
 		t.Fatal("fallback chain or CONNECT handling changed")
 	}
 }

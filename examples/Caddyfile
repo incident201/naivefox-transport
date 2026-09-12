@@ -1,33 +1,20 @@
-# Save as /etc/caddy/Caddyfile, outside the public site directory.
-# Set all four variables for validate, run and reload:
+# Keep configuration, private keys and logs outside the public directory.
+# Set these variables for validate, run and reload:
 #   NAIVEFOX_SERVER=proxy.example.com
-#   NAIVEFOX_APP_ROOT=/etc/caddy/naivefox-applications/atlas-v1
+#   NAIVEFOX_APP_ROOT=/etc/caddy/naivefox-app
 #   NAIVEFOX_USER=USER
 #   NAIVEFOX_PASSWORD=PASSWORD
-# For caddy.service, set these in its service environment; shell exports alone
-# do not configure the service. Keep real credentials out of this example/Git.
 #
-# NAIVEFOX_APP_ROOT is the ONE directory containing the entire public site.
-# Required: index.html, assets/site.css, assets/app.js,
-#           assets/image-1.svg, assets/image-2.svg,
-#           assets/image-3.svg, assets/image-4.svg.
-# Add all other pages, scripts, fonts, images and downloads under that same root.
-# The seven required files update on reload; additional files are read from disk.
-# Replacing the root directory itself also requires reload.
-# No separate root or file_server directive is needed.
-#
-# Keep both addresses: :443 receives classic CONNECT destination authorities;
-# the named host enables certificate automation.
-:443, {$NAIVEFOX_SERVER} {
+# The root contains index.html and its supported directly declared resources.
+# Names, resource count and sizes are operator choices. The client does not
+# execute scripts. Reload after changing the public snapshot or root directory.
+# Configure service variables in the service environment.
+
+{$NAIVEFOX_SERVER} {
 	route {
 		naivefox_transport {
 			application_root {$NAIVEFOX_APP_ROOT}
-			forward_proxy {
-				basic_auth {$NAIVEFOX_USER} {$NAIVEFOX_PASSWORD}
-				hide_ip
-				hide_via
-				probe_resistance
-			}
+			basic_auth {$NAIVEFOX_USER} {$NAIVEFOX_PASSWORD}
 		}
 		respond 404
 	}

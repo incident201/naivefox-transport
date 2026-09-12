@@ -33,7 +33,7 @@ jobs:
           bash tools/go.sh go mod verify
           bash tools/go.sh go test -race ./...
           node --check template/assets/app.js
-      - name: Build Caddy with both proxy modules
+      - name: Build Caddy with NaiveFox
         run: |
           GOBIN="$PWD/artifacts/bin" bash tools/go.sh go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.6
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 XCADDY="$PWD/artifacts/bin/xcaddy" bash tools/build.sh
@@ -41,8 +41,6 @@ jobs:
         run: |
           artifacts/bin/caddy version
           artifacts/bin/caddy list-modules --packages > artifacts/modules.txt
-          grep -E '^http\.handlers\.forward_proxy[[:space:]]+github.com/caddyserver/forwardproxy' artifacts/modules.txt
-          grep -E '^http\.handlers\.forward_proxy.*=> github.com/klzgrad/forwardproxy' artifacts/modules.txt
           grep -E '^http\.handlers\.naivefox_transport[[:space:]]+github.com/incident201/naivefox-transport' artifacts/modules.txt
           python3 - <<'PY'
           binary = open('artifacts/bin/caddy', 'rb').read()
@@ -73,23 +71,21 @@ jobs:
             tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
               -C template -cf - . | gzip -n
           }
-          make_template_archive > dist/naivefox-application-template-v2.tar.gz
-          make_template_archive > dist/naivefox-application-template-v2.second.tar.gz
-          cmp dist/naivefox-application-template-v2.tar.gz dist/naivefox-application-template-v2.second.tar.gz
-          rm dist/naivefox-application-template-v2.second.tar.gz
-          (cd dist && sha256sum naivefox-application-template-v2.tar.gz > naivefox-application-template-v2.tar.gz.sha256)
+          make_template_archive > dist/naivefox-application-template.tar.gz
+          make_template_archive > dist/naivefox-application-template.second.tar.gz
+          cmp dist/naivefox-application-template.tar.gz dist/naivefox-application-template.second.tar.gz
+          rm dist/naivefox-application-template.second.tar.gz
+          (cd dist && sha256sum naivefox-application-template.tar.gz > naivefox-application-template.tar.gz.sha256)
           mkdir dist/template-check
-          tar -xzf dist/naivefox-application-template-v2.tar.gz -C dist/template-check
+          tar -xzf dist/naivefox-application-template.tar.gz -C dist/template-check
           diff -qr template dist/template-check
           rm -rf dist/template-check
           python3 - <<'PY'
           import hashlib, json, os, pathlib, subprocess
           binary = pathlib.Path('dist/caddy-linux-amd64')
-          template = pathlib.Path('dist/naivefox-application-template-v2.tar.gz')
+          template = pathlib.Path('dist/naivefox-application-template.tar.gz')
           build_info = subprocess.check_output(['go', 'version', '-m', str(binary)], text=True).splitlines()
-          expected_proxy = ['=>', 'github.com/klzgrad/forwardproxy', 'v0.0.0-20250118002110-d62c80d3dd2c']
-          assert any(line.split()[:3] == expected_proxy for line in build_info), 'release must use the pinned, unchanged ordinary forwardproxy'
-          assert not any('github.com/incident201/forwardproxy' in line for line in build_info), 'custom forwardproxy is forbidden'
+          assert not any('forwardproxy' in line for line in build_info), 'classic forwardproxy must not be linked'
           data = {
               'source_repository': os.environ['GITHUB_REPOSITORY'],
               'source_commit': os.environ['SOURCE_SHA'],
@@ -138,21 +134,19 @@ jobs:
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check caddy-linux-amd64.sha256)
-          (cd dist && sha256sum --check naivefox-application-template-v2.tar.gz.sha256)
+          (cd dist && sha256sum --check naivefox-application-template.tar.gz.sha256)
           cat > release-notes.md <<EOF
-          Caddy 2.11.2 for Linux x86_64 with both forward_proxy and naivefox_transport.
+          Caddy 2.11.2 for Linux x86_64 with the single current NaiveFox transport.
 
-          Both transports share the credentials and access policy of the nested forward_proxy block. No additional transport key or destination allowlist is needed.
-
-          Classic and no-connect cohosting requires both the hostless :443 site address and the named proxy hostname shown in the README. A hostname-only route cannot receive classic CONNECT requests whose authority names the destination.
+          Configure basic_auth and destination policy directly inside naivefox_transport. Client and server must be updated together; classic NaiveProxy and old wire versions are not supported.
 
           Set application_root to one absolute directory containing the complete public site. The server derives startup resources from index.html and serves their actual bytes from an immutable memory snapshot. There are no compulsory CSS/JS/image filenames, resource counts, manifest files or padding sizes. Other files remain available from disk on GET/HEAD.
 
           The native client loads every distinct supported directly declared resource, at most six at a time, without enabling caching or crawling CSS/JavaScript dependencies. Site size is the author's choice; large directly declared files increase traffic for every new carrier and server snapshot memory. Reload after changing the root or a selected file. Invalid or incomplete sites reject validation.
 
-          See the [site requirements and size recommendations](https://github.com/$GH_REPO/blob/$SOURCE_SHA/docs/SITE.md) and [complete Caddyfile](https://github.com/$GH_REPO/blob/$SOURCE_SHA/README.md#site-directory-and-caddyfile).
+          See the [site requirements and size recommendations](https://github.com/$GH_REPO/blob/$SOURCE_SHA/docs/SITE.md) and [complete Caddyfile](https://github.com/$GH_REPO/blob/$SOURCE_SHA/README.md#build-and-configure).
 
-          Upgrade both NaiveFox and this server together. Only current native-stream-v2 is supported. Public responses contain no X-App-* headers. The first carrier pair authenticates and privately confirms the contract and streamed site digest before OPEN. Anonymous API/WebSocket requests use normal site fallback. The twenty startup pairs and shaped WebSocket remain; classic remains the default with shared credentials and policy.
+          H2 uses native WSS/TCP after the site and twenty-pair startup. H3 remains on QUIC with a persistent HTTP/3 GET and bounded POST pipeline. Public responses contain no transport metadata. Authentication and the shared site identity are verified before OPEN.
 
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 
@@ -162,8 +156,8 @@ jobs:
           EOF
           gh release create "$RELEASE_TAG" \
             dist/caddy-linux-amd64 dist/caddy-linux-amd64.sha256 \
-            dist/naivefox-application-template-v2.tar.gz \
-            dist/naivefox-application-template-v2.tar.gz.sha256 \
+            dist/naivefox-application-template.tar.gz \
+            dist/naivefox-application-template.tar.gz.sha256 \
             dist/build-info.json \
             --target "$SOURCE_SHA" --title "Caddy 2.11.2 + NaiveFox transport ($RELEASE_TAG)" \
             --notes-file release-notes.md --latest

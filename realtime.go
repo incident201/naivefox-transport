@@ -14,7 +14,7 @@ import (
 	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
-const realtimeProtocol = "nfc1.stream.v1"
+const realtimeProtocol = "naivefox"
 
 const realtimeCreditFloor = 8192 - cell.Header - cell.FrameHeader
 
@@ -142,7 +142,7 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request, next caddyh
 		}
 	}
 	s.mu.Lock()
-	ready := protocol != "" && !s.realtime && !s.startupInvalid && s.startupSteps == 40 && s.up >= 20 && s.down >= 20 && s.httpActive == 0
+	ready := !s.h3 && protocol != "" && !s.realtime && !s.startupInvalid && s.startupSteps == 40 && s.up >= 20 && s.down >= 20 && s.httpActive == 0
 	select {
 	case <-s.peer.Done():
 		ready = false
@@ -259,18 +259,38 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	default:
 	}
 	t.mu.Lock()
-	t.stats.WSMessagesIn++
-	t.stats.WSCellCapacities["in "+strconv.Itoa(len(body))]++
+	if s.h3 {
+		t.stats.H3Uploads++
+	} else {
+		t.stats.WSMessagesIn++
+		t.stats.WSCellCapacities["in "+strconv.Itoa(len(body))]++
+	}
 
 	t.stats.UploadBytes += uint64(len(body))
 	t.stats.UploadFiller += uint64(filler)
 	t.stats.UploadUseful += useful
-	t.stats.WSUploadBytes += uint64(len(body))
-	t.stats.WSUploadFiller += uint64(filler)
-	t.stats.WSUploadUseful += useful
+	if !s.h3 {
+		t.stats.WSUploadBytes += uint64(len(body))
+		t.stats.WSUploadFiller += uint64(filler)
+		t.stats.WSUploadUseful += useful
+	}
 	t.stats.Opens += opens
 	t.mu.Unlock()
 	return nil
+}
+
+func (s *session) maxDownCell() int {
+	if s.h3 {
+		return 65536
+	}
+	return cell.MaxCell
+}
+
+func (s *session) readyDownCapacity(pressure mux.Pressure) int {
+	if s.h3 && realtimeFramedBytes(pressure) <= 512 {
+		return 512
+	}
+	return min(realtimeReadyDownCapacity(pressure), s.maxDownCell())
 }
 
 func waitRealtimeCoalesce(ctx context.Context, s *session, delay time.Duration) bool {
@@ -285,7 +305,7 @@ func waitRealtimeCoalesce(ctx context.Context, s *session, delay time.Duration) 
 		default:
 		}
 		pressure := s.peer.PressureWithCreditFloor(realtimeCreditFloor)
-		if pressure.Bytes == 0 || realtimeReadyDownCapacity(pressure) == cell.MaxCell {
+		if pressure.Bytes == 0 || realtimeReadyDownCapacity(pressure) >= s.maxDownCell() {
 			return true
 		}
 		select {
@@ -302,7 +322,18 @@ func waitRealtimeCoalesce(ctx context.Context, s *session, delay time.Duration) 
 }
 
 func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *session, idleInterval time.Duration) {
-	heartbeat := time.NewTimer(idleInterval)
+	t.writeCells(ctx, s, idleInterval, func(body []byte) error {
+		conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		return conn.WriteMessage(websocket.BinaryMessage, body)
+	})
+}
+
+func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval time.Duration, write func([]byte) error) {
+	firstDelay := idleInterval
+	if s.h3 {
+		firstDelay = 0
+	}
+	heartbeat := time.NewTimer(firstDelay)
 	defer heartbeat.Stop()
 	for {
 		idleHeartbeat := false
@@ -323,7 +354,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			case <-s.wake:
 				continue
 			}
-		} else if pressure.Bytes > 0 && realtimeFramedBytes(pressure) < int64(realtimeCoalescingDownCapacity(pressure.Bytes)) {
+		} else if pressure.Bytes > 0 && s.readyDownCapacity(pressure) != 512 && realtimeFramedBytes(pressure) < int64(min(realtimeCoalescingDownCapacity(pressure.Bytes), s.maxDownCell())) {
 			if !waitRealtimeCoalesce(ctx, s, 2*time.Millisecond) {
 				return
 			}
@@ -339,7 +370,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			s.mu.Unlock()
 			continue
 		}
-		capacity := realtimeReadyDownCapacity(pressure)
+		capacity := s.readyDownCapacity(pressure)
 		frames := []cell.Frame{}
 		budget := capacity - cell.Header
 		if s.ackPending {
@@ -373,8 +404,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 		if err != nil {
 			return
 		}
-		conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
-		if err := conn.WriteMessage(websocket.BinaryMessage, body); err != nil {
+		if err := write(body); err != nil {
 			return
 		}
 		used, useful := cell.Header, uint64(0)
@@ -388,15 +418,21 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 		if idleHeartbeat && len(frames) == 0 {
 			t.stats.IdleHeartbeats++
 		}
-		t.stats.WSMessagesOut++
-		t.stats.WSCellCapacities["out "+strconv.Itoa(capacity)]++
+		if s.h3 {
+			t.stats.H3Downloads++
+		} else {
+			t.stats.WSMessagesOut++
+			t.stats.WSCellCapacities["out "+strconv.Itoa(capacity)]++
+		}
 
 		t.stats.DownloadBytes += uint64(len(body))
 		t.stats.DownloadFiller += uint64(len(body) - used)
 		t.stats.DownloadUseful += useful
-		t.stats.WSDownloadBytes += uint64(len(body))
-		t.stats.WSDownloadFiller += uint64(len(body) - used)
-		t.stats.WSDownloadUseful += useful
+		if !s.h3 {
+			t.stats.WSDownloadBytes += uint64(len(body))
+			t.stats.WSDownloadFiller += uint64(len(body) - used)
+			t.stats.WSDownloadUseful += useful
+		}
 		t.stats.CellCapacities[strconv.Itoa(capacity)]++
 		t.mu.Unlock()
 		heartbeat.Reset(idleInterval)

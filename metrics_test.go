@@ -10,7 +10,7 @@ import (
 )
 
 func TestUntrustedRequestLabelsRemainBounded(t *testing.T) {
-	module := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), Access: testAccess()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}

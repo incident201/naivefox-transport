@@ -9,13 +9,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caddyserver/forwardproxy"
+	"github.com/caddyserver/caddy/v2"
 )
 
-// tcpPolicy is this module's small TCP policy engine. It consumes only the
-// ordinary forwardproxy handler's public configuration; it neither modifies
-// that module nor calls private methods. Differential tests preserve its ACL
-// decisions, including the separate domain-denial check before DNS lookup.
+type AccessConfig struct {
+	Credentials  []Credential   `json:"credentials"`
+	ACL          []ACLRule      `json:"acl,omitempty"`
+	AllowedPorts []int          `json:"allowed_ports,omitempty"`
+	DialTimeout  caddy.Duration `json:"dial_timeout,omitempty"`
+	Upstream     string         `json:"upstream,omitempty"`
+}
+type ACLRule struct {
+	Subjects []string `json:"subjects"`
+	Allow    bool     `json:"allow"`
+}
+
 type tcpPolicy struct {
 	rules    []destinationRule
 	ports    map[int]bool
@@ -30,12 +38,15 @@ type destinationRule struct {
 	subdomains bool
 }
 
-func newTCPPolicy(fp *forwardproxy.Handler) (*tcpPolicy, error) {
+func newTCPPolicy(fp *AccessConfig) (*tcpPolicy, error) {
 	p := &tcpPolicy{timeout: time.Duration(fp.DialTimeout), ports: make(map[int]bool)}
 	if p.timeout <= 0 {
 		p.timeout = 30 * time.Second
 	}
 	for _, port := range fp.AllowedPorts {
+		if port < 1 || port > 65535 {
+			return nil, errors.New("invalid allowed port")
+		}
 		p.ports[port] = true
 	}
 	for _, rule := range fp.ACL {
@@ -47,8 +58,7 @@ func newTCPPolicy(fp *forwardproxy.Handler) (*tcpPolicy, error) {
 			p.rules = append(p.rules, compiled)
 		}
 	}
-	// These are the ordinary module's default private-network rules, evaluated
-	// after the operator's explicit rules and before the final allow-all rule.
+	// Explicit operator rules precede the default private-network exclusions.
 	for _, cidr := range []string{"10.0.0.0/8", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fe80::/10"} {
 		rule, _ := compileDestinationRule(cidr, false)
 		p.rules = append(p.rules, rule)
@@ -57,8 +67,8 @@ func newTCPPolicy(fp *forwardproxy.Handler) (*tcpPolicy, error) {
 	if fp.Upstream != "" {
 		var err error
 		p.upstream, err = url.Parse(fp.Upstream)
-		if err != nil {
-			return nil, errors.New("invalid forward_proxy upstream URL")
+		if err != nil || p.upstream.Hostname() == "" || (p.upstream.Scheme != "http" && p.upstream.Scheme != "https" && p.upstream.Scheme != "socks5" && p.upstream.Scheme != "socks5h") {
+			return nil, errors.New("invalid NaiveFox upstream URL")
 		}
 	}
 	return p, nil
@@ -82,14 +92,14 @@ func compileDestinationRule(subject string, allow bool) (destinationRule, error)
 		return rule, nil
 	}
 	rule.subdomains = strings.HasPrefix(subject, "*.")
-	rule.domain = strings.TrimPrefix(subject, "*.")
+	rule.domain = strings.ToLower(strings.TrimPrefix(subject, "*."))
 	for _, label := range strings.Split(rule.domain, ".") {
 		if len(label) == 0 || len(label) > 63 {
-			return rule, errors.New("invalid forward_proxy ACL domain")
+			return rule, errors.New("invalid NaiveFox ACL domain")
 		}
 		for _, c := range label {
 			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
-				return rule, errors.New("invalid forward_proxy ACL domain")
+				return rule, errors.New("invalid NaiveFox ACL domain")
 			}
 		}
 	}
@@ -103,7 +113,7 @@ func (r destinationRule) matches(host string, ip net.IP) bool {
 	if r.domain == "" {
 		return true
 	}
-	host = strings.TrimPrefix(host, ".")
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(host, "."), "."))
 	return host == r.domain || (r.subdomains && strings.HasSuffix(host, "."+r.domain))
 }
 
@@ -116,8 +126,7 @@ func (p *tcpPolicy) DialContext(ctx context.Context, target string) (net.Conn, e
 		return nil, errors.New("invalid TCP destination")
 	}
 	if p.upstream != nil {
-		// Ordinary forwardproxy deliberately delegates DNS, ACL and port policy
-		// to an upstream when configured. Do not resolve or filter locally.
+		// A configured upstream owns destination resolution and policy.
 		return dialUpstream(ctx, target, p.upstream, p.timeout)
 	}
 	number, err := strconv.Atoi(port)

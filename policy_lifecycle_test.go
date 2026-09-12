@@ -7,8 +7,6 @@ import (
 	"net"
 	"testing"
 	"time"
-
-	"github.com/caddyserver/forwardproxy"
 )
 
 func TestDirectPolicyKeepsConnectionAfterDialContextCancellation(t *testing.T) {
@@ -46,7 +44,7 @@ func TestDirectPolicyKeepsConnectionAfterDialContextCancellation(t *testing.T) {
 			}
 			done <- err
 		}()
-		policy, err := newTCPPolicy(&forwardproxy.Handler{ACL: []forwardproxy.ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}})
+		policy, err := newTCPPolicy(&AccessConfig{ACL: []ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}})
 		if err != nil {
 			t.Fatal(err)
 		}

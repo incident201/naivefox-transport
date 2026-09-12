@@ -13,7 +13,6 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/caddyserver/forwardproxy"
 	"github.com/gorilla/websocket"
 	"github.com/incident201/naivefox-transport/internal/cell"
 	"github.com/incident201/naivefox-transport/internal/mux"
@@ -30,8 +29,8 @@ type realtimeFixture struct {
 
 func newRealtimeFixture(t *testing.T) *realtimeFixture {
 	t.Helper()
-	module := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
-	module.ForwardProxy.ACL = []forwardproxy.ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}
+	module := &Transport{ApplicationRoot: testApplicationRoot(t), Access: testAccess()}
+	module.Access.ACL = []ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +101,7 @@ func (f *realtimeFixture) bootstrap(auth bool, extra []cell.Frame) {
 		seq, received, _, err := cell.Decode(response)
 		if round == 0 && (len(received) != 1 || received[0].Kind != cell.Hello ||
 			received[0].Stream != 0 || received[0].Sequence != 0 ||
-			string(received[0].Body) != defaultProfile+"\n"+f.module.application.identity) {
+			string(received[0].Body) != transportIdentity+"\n"+f.module.application.identity) {
 			f.t.Fatal("authenticated contract confirmation")
 		}
 		if status != 200 || err != nil || seq != f.down {
@@ -386,10 +385,7 @@ func TestRealtimeCleanupClosesBlockedReader(t *testing.T) {
 }
 
 func TestRealtimeIdleAccountingExcludesAcknowledgements(t *testing.T) {
-	peer, err := mux.NewWithWindow(nil, 524288)
-	if err != nil {
-		t.Fatal(err)
-	}
+	peer := mux.New(nil)
 	defer peer.Close()
 	s := &session{peer: peer, wake: make(chan struct{}, 1), down: 20, ackPending: true, ackSequence: 20}
 	module := &Transport{ApplicationRoot: testApplicationRoot(t), stats: counters{WSCellCapacities: make(map[string]uint64), CellCapacities: make(map[string]uint64)}}
@@ -488,5 +484,29 @@ func TestFullCellCreditKeepsCapacityWithoutNextAck(t *testing.T) {
 		if err != nil || filler > cell.FrameHeader {
 			t.Fatalf("unexpected framing slack: %d %v", filler, err)
 		}
+	}
+}
+
+func TestHTTP3SmallCellIncludesAllFraming(t *testing.T) {
+	s := &session{h3: true}
+	pressure := mux.Pressure{Bytes: 464, FrameOverhead: cell.FrameHeader}
+	if capacity := s.readyDownCapacity(pressure); capacity != 512 {
+		t.Fatal("small framed response did not use smallest cell")
+	}
+	frames := []cell.Frame{{Kind: cell.Ack}, {Kind: cell.Data, Stream: 1, Body: make([]byte, 464)}}
+	if _, err := cell.Encode(0, s.readyDownCapacity(pressure), frames); err != nil {
+		t.Fatal(err)
+	}
+	pressure.Bytes++
+	if s.readyDownCapacity(pressure) != 8192 {
+		t.Fatal("frame overhead omitted from capacity")
+	}
+	pressure.Bytes = 4 * 1024 * 1024
+	if s.readyDownCapacity(pressure) != 65536 {
+		t.Fatal("H3 complete-cell bound exceeded")
+	}
+	s.h3 = false
+	if s.readyDownCapacity(pressure) != cell.MaxCell {
+		t.Fatal("H2 capacity policy changed")
 	}
 }

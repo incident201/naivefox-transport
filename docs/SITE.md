@@ -1,11 +1,11 @@
-# Site contract for native-stream-v2
+# Site contract for NaiveFox
 
 Set `application_root` to one absolute directory containing `index.html` and
 the complete public site. The module discovers startup resources from that HTML.
 There are no compulsory CSS, JavaScript or image filenames, resource counts,
 manifest files, generators or injected transport scripts.
 
-Both the server and NaiveFox must support `native-stream-v2`. Older
+Both the server and NaiveFox must support `NaiveFox`. Older
 `native-stream-v1` clients/servers require a coordinated upgrade. Classic
 CONNECT and its separate fronting-page requirements are unchanged.
 
@@ -83,7 +83,7 @@ may require additional carriers. Failed/restarted attempts and encrypted
 transport overhead add traffic. There is no recursive crawl, periodic reload,
 automatic retry or inter-carrier resource cache.
 
-The twenty NFC1 POST/GET pairs remain an additional 960 KiB of body capacity per
+The twenty NFOX POST/GET pairs remain an additional 960 KiB of body capacity per
 new carrier, with useful proxy data displacing filler where available. They
 still precede the persistent WebSocket. This site contract does not make an
 arbitrary site's JavaScript perform those transport exchanges.

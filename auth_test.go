@@ -3,7 +3,6 @@ package transport
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"bytes"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/caddyserver/forwardproxy"
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
 
@@ -26,14 +24,14 @@ func TestInvalidAuthenticationCannotOpenLiveTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
-	m.ForwardProxy.ACL = []forwardproxy.ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}
+	m := &Transport{ApplicationRoot: testApplicationRoot(t), Access: testAccess()}
+	m.Access.ACL = []ACLRule{{Subjects: []string{"127.0.0.1"}, Allow: true}}
 	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	defer m.Cleanup()
 	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(404); return nil })
-	for _, authorization := range []string{"", "Basic ", "Basic " + string(forwardproxy.EncodeAuthCredentials("fixture", "wrong")), "Basic " + string(forwardproxy.EncodeAuthCredentials("", ""))} {
+	for _, authorization := range []string{"", "Basic ", "Basic " + string(encodeTestCredential("fixture", "wrong")), "Basic " + string(encodeTestCredential("", ""))} {
 		root := httptest.NewRecorder()
 		m.ServeHTTP(root, testRequest("GET", "https://localhost/", nil), next)
 		frames := []cell.Frame{{Kind: cell.Open, Stream: 1, Body: []byte(listener.Addr().String())}}
@@ -68,11 +66,11 @@ func testRequest(method, target string, body io.Reader) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), caddy.ReplacerCtxKey, caddy.NewReplacer()))
 }
 
-func testForwardProxy() *forwardproxy.Handler {
-	return &forwardproxy.Handler{
-		AuthCredentials: [][]byte{forwardproxy.EncodeAuthCredentials("fixture", "fixture")},
-		HideIP:          true, HideVia: true, ProbeResistance: &forwardproxy.ProbeResistance{},
-	}
+func encodeTestCredential(user, password string) []byte {
+	return []byte(base64.StdEncoding.EncodeToString([]byte(user + ":" + password)))
+}
+func testAccess() AccessConfig {
+	return AccessConfig{Credentials: []Credential{{Username: "fixture", Password: "fixture"}}}
 }
 
 func testApplicationRoot(t *testing.T) string {
@@ -92,8 +90,8 @@ func testCaddyContext(t *testing.T) caddy.Context {
 }
 
 func TestSharedCredentials(t *testing.T) {
-	m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
-	m.ForwardProxy.AuthCredentials = append(m.ForwardProxy.AuthCredentials, forwardproxy.EncodeAuthCredentials("another", "p:a:ss"))
+	m := &Transport{ApplicationRoot: testApplicationRoot(t), Access: testAccess()}
+	m.Access.Credentials = append(m.Access.Credentials, Credential{Username: "another", Password: "p:a:ss"})
 	if err := m.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -110,42 +108,26 @@ func TestSharedCredentials(t *testing.T) {
 	}
 }
 
-func TestModuleRequiresSharedAuthentication(t *testing.T) {
-	for _, credentials := range [][][]byte{nil, {}, {forwardproxy.EncodeAuthCredentials("", "")}, {[]byte("not-base64")}, {forwardproxy.EncodeAuthCredentials("user", strings.Repeat("a", 4000))}} {
-		m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: &forwardproxy.Handler{AuthCredentials: credentials}}
+func TestModuleRequiresAuthentication(t *testing.T) {
+	for _, credentials := range [][]Credential{nil, {}, {{}}, {{Username: "bad:user", Password: "p"}}, {{Username: "user", Password: strings.Repeat("a", 4000)}}} {
+		m := &Transport{ApplicationRoot: testApplicationRoot(t), Access: AccessConfig{Credentials: credentials}}
 		if err := m.Provision(testCaddyContext(t)); err == nil {
 			m.Cleanup()
 			t.Fatal("unsafe configuration accepted")
 		}
 	}
-	if err := (&Transport{ApplicationRoot: testApplicationRoot(t)}).Provision(testCaddyContext(t)); err == nil {
-		t.Fatal("missing forward_proxy accepted")
-	}
 }
 
-func TestOneEmptyCredentialPartMatchesClassic(t *testing.T) {
+func TestOneEmptyCredentialPart(t *testing.T) {
 	for _, pair := range [][2]string{{"", "password"}, {"username", ""}} {
-		m := &Transport{ApplicationRoot: testApplicationRoot(t), ForwardProxy: testForwardProxy()}
-		m.ForwardProxy.AuthCredentials = [][]byte{forwardproxy.EncodeAuthCredentials(pair[0], pair[1])}
+		m := &Transport{ApplicationRoot: testApplicationRoot(t), Access: testAccess()}
+		m.Access.Credentials = []Credential{{Username: pair[0], Password: pair[1]}}
 		if err := m.Provision(testCaddyContext(t)); err != nil {
 			t.Fatal(err)
 		}
-		if !m.authenticate([]byte("Basic " + string(m.ForwardProxy.AuthCredentials[0]))) {
-			t.Fatal("valid classic-compatible credential rejected")
+		if !m.authenticate([]byte("Basic " + string(encodeTestCredential(pair[0], pair[1])))) {
+			t.Fatal("valid credential rejected")
 		}
 		m.Cleanup()
-	}
-}
-
-func TestLegacyJSONRejected(t *testing.T) {
-	for _, input := range []string{`{"key":""}`, `{"key":null}`, `{"allowed_targets":[]}`, `{"allowed_targets":null}`} {
-		var m Transport
-		if err := json.Unmarshal([]byte(input), &m); err != nil {
-			t.Fatal(err)
-		}
-		m.ForwardProxy = testForwardProxy()
-		if err := m.Provision(testCaddyContext(t)); err == nil || !strings.Contains(err.Error(), "were removed") {
-			t.Fatalf("migration should fail explicitly: %v", err)
-		}
 	}
 }

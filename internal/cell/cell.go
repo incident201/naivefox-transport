@@ -10,7 +10,8 @@ const (
 	Header           = 16
 	FrameHeader      = 16
 	MaxCell          = 256 * 1024
-	Window           = 256 * 1024
+	Window           = 512 * 1024
+	HTTP3Window      = 1024 * 1024
 	MaxStreams       = 32
 	Open        byte = 1
 	Data        byte = 2
@@ -50,7 +51,7 @@ func Encode(sequence uint32, capacity int, frames []Frame) ([]byte, error) {
 	if _, err := rand.Read(body[used:]); err != nil {
 		return nil, err
 	}
-	copy(body, "NFC1")
+	copy(body, "NFOX")
 	binary.BigEndian.PutUint32(body[4:8], sequence)
 	binary.BigEndian.PutUint32(body[8:12], uint32(used))
 	binary.BigEndian.PutUint16(body[12:14], uint16(len(frames)))
@@ -69,7 +70,7 @@ func Encode(sequence uint32, capacity int, frames []Frame) ([]byte, error) {
 
 func Decode(body []byte) (uint32, []Frame, int, error) {
 	bad := errors.New("invalid carrier cell")
-	if len(body) < Header || len(body) > MaxCell || string(body[:4]) != "NFC1" || body[15] != 0 || body[14] != 0 {
+	if len(body) < Header || len(body) > MaxCell || string(body[:4]) != "NFOX" || body[15] != 0 || body[14] != 0 {
 		return 0, nil, 0, bad
 	}
 	seq := binary.BigEndian.Uint32(body[4:8])

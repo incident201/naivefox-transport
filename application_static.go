@@ -17,7 +17,7 @@ func isCarrierPath(path string) bool {
 
 func (application applicationFiles) isReservedApplicationPath(path string) bool {
 	_, asset := application.asset(path)
-	return asset || path == "/index.html" || path == "/api/realtime" ||
+	return asset || path == "/index.html" || path == "/api/realtime" || path == "/api/stream" || path == "/api/upload" ||
 		isCarrierPath(path) || strings.HasPrefix(path, "/__lab/")
 }
 

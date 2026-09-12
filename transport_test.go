@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-func TestUnknownProfileRejected(t *testing.T) {
-	module := &Transport{ApplicationRoot: testApplicationRoot(t), Profile: "typo", ForwardProxy: testForwardProxy()}
-	if err := module.Provision(testCaddyContext(t)); err == nil {
-		module.Cleanup()
-		t.Fatal("unknown profile accepted")
-	}
-}
-
 func TestStartupCapacityAndHTTPRetirement(t *testing.T) {
 	f := newRealtimeFixture(t)
 	f.bootstrap(true, nil)

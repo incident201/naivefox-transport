@@ -24,7 +24,7 @@ import (
 const maxUpstreamResponseHeaders = 64 << 10
 
 // dialUpstream opens one dedicated upstream connection per target. It does not
-// change forwardproxy, register global dialers, resolve the target locally, or
+// register global dialers, resolve the target locally, or
 // share an HTTP/2 connection with another target. The timeout bounds setup only.
 func dialUpstream(ctx context.Context, target string, upstream *url.URL, timeout time.Duration) (net.Conn, error) {
 	return dialUpstreamTLS(ctx, target, upstream, timeout, nil)

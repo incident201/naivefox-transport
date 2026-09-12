@@ -19,7 +19,6 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/caddyserver/forwardproxy"
 	"github.com/incident201/naivefox-transport/internal/cell"
 	"github.com/incident201/naivefox-transport/internal/mux"
 	"go.uber.org/zap"
@@ -28,27 +27,26 @@ import (
 func init() { caddy.RegisterModule(Transport{}) }
 
 type Transport struct {
-	ApplicationRoot string                `json:"application_root,omitempty"`
-	Profile         string                `json:"profile,omitempty"`
-	StatsPath       string                `json:"stats_path,omitempty"`
-	ForwardProxy    *forwardproxy.Handler `json:"forward_proxy"`
-	MaxSessions     int                   `json:"max_sessions,omitempty"`
-	Diagnostics     bool                  `json:"diagnostics,omitempty"`
+	ApplicationRoot string       `json:"application_root,omitempty"`
+	StatsPath       string       `json:"stats_path,omitempty"`
+	Access          AccessConfig `json:"access"`
+	MaxSessions     int          `json:"max_sessions,omitempty"`
+	Diagnostics     bool         `json:"diagnostics,omitempty"`
 	authHashes      [][32]byte
 	policy          *tcpPolicy
-	// Retain old field names only to reject migrations explicitly, including
-	// empty values. They never authorize a session or limit destinations.
-	LegacyKey     json.RawMessage `json:"key,omitempty"`
-	LegacyTargets json.RawMessage `json:"allowed_targets,omitempty"`
-	application   applicationFiles
-	mu            sync.Mutex
-	sessions      map[string]*session
-	stats         counters
-	stop          chan struct{}
-	done          chan struct{}
+	application     applicationFiles
+	mu              sync.Mutex
+	sessions        map[string]*session
+	stats           counters
+	stop            chan struct{}
+	done            chan struct{}
 }
 
 type counters struct {
+	H3Opened         uint64            `json:"h3_opened"`
+	H3Closed         uint64            `json:"h3_closed"`
+	H3Uploads        uint64            `json:"h3_uploads"`
+	H3Downloads      uint64            `json:"h3_downloads"`
 	WSOpened         uint64            `json:"ws_opened"`
 	WSClosed         uint64            `json:"ws_closed"`
 	WSMessagesIn     uint64            `json:"ws_messages_in"`
@@ -78,7 +76,6 @@ type counters struct {
 	DownloadUseful   uint64            `json:"download_useful"`
 	Opens            uint64            `json:"opens"`
 	Rejected         uint64            `json:"rejected"`
-	Connect          uint64            `json:"connect"`
 }
 
 type session struct {
@@ -93,6 +90,10 @@ type session struct {
 	startupSteps   int
 	startupInvalid bool
 	httpActive     int
+	h3Active       int
+	h3             bool
+	uploadMu       sync.Mutex
+	pendingUploads map[uint32]*pendingUpload
 	realtime       bool
 	realtimeConn   io.Closer
 	ackPending     bool
@@ -122,17 +123,11 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 	if t.MaxSessions == 0 {
 		t.MaxSessions = 128
 	}
-	if t.Profile != "" && t.Profile != defaultProfile {
-		return errors.New("unsupported application profile")
-	}
-	if t.LegacyKey != nil || t.LegacyTargets != nil {
-		return errors.New("key and allowed_targets were removed; move forward_proxy inside naivefox_transport and configure basic_auth once for both transports")
-	}
 	application, err := loadApplication(t.ApplicationRoot)
 	if err != nil {
 		return fmt.Errorf("load application: %w", err)
 	}
-	if err := t.provisionForwardProxy(ctx); err != nil {
+	if err := t.provisionAccess(); err != nil {
 		application.close()
 		return err
 	}
@@ -190,7 +185,8 @@ func (t *Transport) Cleanup() (err error) {
 	for id, s := range t.sessions {
 		peerStats := s.peer.Snapshot()
 		s.mu.Lock()
-		peerStats.WebSocket, peerStats.StartupUp, peerStats.StartupDown = s.realtime, s.wsStartupUp, s.wsStartupDown
+		peerStats.WebSocket, peerStats.HTTP3 = s.realtime && !s.h3, s.h3
+		peerStats.StartupUp, peerStats.StartupDown = s.wsStartupUp, s.wsStartupDown
 		s.mu.Unlock()
 		t.stats.Peers = append(t.stats.Peers, peerStats)
 		s.close()
@@ -221,6 +217,10 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	if cookie, err := r.Cookie("session"); err == nil {
 		if s := t.sessions[cookie.Value]; s != nil && s.ip == ip {
 			s.mu.Lock()
+			if s.authed && (r.ProtoMajor == 3) != s.h3 {
+				s.mu.Unlock()
+				return nil, errors.New("authenticated carrier protocol changed")
+			}
 			s.last = time.Now()
 			s.mu.Unlock()
 			return s, nil
@@ -256,8 +256,12 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	if _, err := rand.Read(token); err != nil {
 		return nil, err
 	}
-	s := &session{ip: ip, last: time.Now(), wake: make(chan struct{}, 1)}
-	s.peer, err = mux.NewWithWindow(func(ctx context.Context, target string) (net.Conn, error) {
+	s := &session{ip: ip, last: time.Now(), wake: make(chan struct{}, 1), h3: r.ProtoMajor == 3}
+	newPeer := mux.New
+	if s.h3 {
+		newPeer = mux.NewHTTP3
+	}
+	s.peer = newPeer(func(ctx context.Context, target string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(target)
 		if err != nil || host == "" || strings.ContainsAny(host, "\x00\r\n\t /?#@") || port == "" {
 			return nil, errors.New("invalid TCP destination")
@@ -278,10 +282,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 			return nil, errors.New("unauthenticated stream")
 		}
 		return t.policy.DialContext(ctx, target)
-	}, 512*1024)
-	if err != nil {
-		return nil, err
-	}
+	})
 	id := hex.EncodeToString(token)
 	t.sessions[id] = s
 	http.SetCookie(w, &http.Cookie{Name: "session", Value: id, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
@@ -296,6 +297,12 @@ func (t *Transport) reject(w http.ResponseWriter) {
 }
 
 func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	if r.URL.Path == "/api/stream" {
+		return t.h3Stream(w, r, next)
+	}
+	if r.URL.Path == "/api/upload" {
+		return t.h3Upload(w, r, next)
+	}
 	if r.URL.Path == "/api/realtime" {
 		return t.realtime(w, r, next)
 	}
@@ -310,12 +317,6 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		w.Header().Set("Cache-Control", "no-store")
 		return json.NewEncoder(w).Encode(t.stats)
 	}
-	if r.Method == "CONNECT" {
-		t.mu.Lock()
-		t.stats.Connect++
-		t.mu.Unlock()
-		return t.ForwardProxy.ServeHTTP(w, r, next)
-	}
 	path := r.URL.Path
 	_, isAsset := t.application.asset(path)
 	carrier := isCarrierPath(path)
@@ -323,7 +324,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		if handled, err := t.application.serveStatic(w, r); handled {
 			return err
 		}
-		return t.ForwardProxy.ServeHTTP(w, r, next)
+		return next.ServeHTTP(w, r)
 	}
 	methodLabel, pathLabel, protocolLabel := r.Method, path, r.Proto
 	if methodLabel != "GET" && methodLabel != "POST" {
@@ -509,7 +510,7 @@ func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) 
 	s.mu.Lock()
 	var frames []cell.Frame
 	if s.down == 0 {
-		frames = []cell.Frame{{Kind: cell.Hello, Body: []byte(defaultProfile + "\n" + t.application.identity)}}
+		frames = []cell.Frame{{Kind: cell.Hello, Body: []byte(transportIdentity + "\n" + t.application.identity)}}
 	} else {
 		frames = s.peer.Take(capacity - cell.Header)
 	}

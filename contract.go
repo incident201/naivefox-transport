@@ -1,6 +1,6 @@
 package transport
 
-const defaultProfile = "native-stream-v2"
+const transportIdentity = "naivefox"
 
 var startupSlots = [...]int{
 	8192, 8192, 8192, 8192, 32768, 32768,

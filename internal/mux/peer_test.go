@@ -97,47 +97,34 @@ func TestReadablePressureExcludesFinishedAndResetStreams(t *testing.T) {
 	}
 }
 
-func TestConfiguredWindowBoundsWithoutWriterProgress(t *testing.T) {
-	for _, window := range []uint32{0, cell.Window, 2 * cell.Window} {
-		peer, err := NewWithWindow(nil, window)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := window
-		if want == 0 {
-			want = cell.Window
-		}
-		s := peer.newStream(1) // No attached writer: no delivery or credit grant.
-		if s.credit != want || s.budget != want || peer.Snapshot().ReceiveWindow != want || cap(s.output) != 16 || cap(s.input) != int(want)/streamChunk+1 || cap(s.inputReady) != 1 {
-			t.Fatal("window or queue bound")
-		}
-		for offset := uint32(0); offset < want; offset += 16384 {
-			if err := peer.Receive([]cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: offset, Body: make([]byte, 16384)}}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if s.budget != 0 || s.grant != 0 {
-			t.Fatal("credit without delivery")
-		}
-		if err := peer.Receive([]cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: want, Body: []byte{1}}}); err == nil {
-			t.Fatal("receive bound bypass")
-		}
-		if err := peer.Receive([]cell.Frame{{Kind: cell.Credit, Stream: 1, Body: cell.Uint32(1)}}); err == nil {
-			t.Fatal("full window overflow")
-		}
-		s.credit = 0
-		if err := peer.Receive([]cell.Frame{{Kind: cell.Credit, Stream: 1, Body: cell.Uint32(want)}}); err != nil {
-			t.Fatal(err)
-		}
-		if err := peer.Receive([]cell.Frame{{Kind: cell.Credit, Stream: 1, Body: cell.Uint32(1)}}); err == nil {
-			t.Fatal("restored window overflow")
-		}
-		peer.Close()
+func TestWindowBoundsWithoutWriterProgress(t *testing.T) {
+	peer := New(nil)
+	defer peer.Close()
+	const want = 512 * 1024
+	s := peer.newStream(1) // No attached writer: no delivery or credit grant.
+	if s.credit != want || s.budget != want || peer.Snapshot().ReceiveWindow != want || cap(s.output) != 16 || cap(s.input) != int(want)/streamChunk+1 || cap(s.inputReady) != 1 {
+		t.Fatal("window or queue bound")
 	}
-	for _, window := range []uint32{1, cell.Window - 1, cell.Window + 1, 2*cell.Window + 1, ^uint32(0)} {
-		if peer, err := NewWithWindow(nil, window); err == nil || peer != nil {
-			t.Fatal("unsupported window")
+	for offset := uint32(0); offset < want; offset += 16384 {
+		if err := peer.Receive([]cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: offset, Body: make([]byte, 16384)}}); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if s.budget != 0 || s.grant != 0 {
+		t.Fatal("credit without delivery")
+	}
+	if err := peer.Receive([]cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: want, Body: []byte{1}}}); err == nil {
+		t.Fatal("receive bound bypass")
+	}
+	if err := peer.Receive([]cell.Frame{{Kind: cell.Credit, Stream: 1, Body: cell.Uint32(1)}}); err == nil {
+		t.Fatal("full window overflow")
+	}
+	s.credit = 0
+	if err := peer.Receive([]cell.Frame{{Kind: cell.Credit, Stream: 1, Body: cell.Uint32(want)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.Receive([]cell.Frame{{Kind: cell.Credit, Stream: 1, Body: cell.Uint32(1)}}); err == nil {
+		t.Fatal("restored window overflow")
 	}
 }
 
@@ -258,5 +245,26 @@ func TestInvalidSequenceCreditAndCancel(t *testing.T) {
 		}
 		app.Close()
 		peer.Close()
+	}
+}
+
+func TestHTTP3WindowMatchesContract(t *testing.T) {
+	peer := NewHTTP3(nil)
+	defer peer.Close()
+	s := peer.newStream(1)
+	const window = 1024 * 1024
+	if s.credit != window || s.budget != window || peer.Snapshot().ReceiveWindow != window {
+		t.Fatal("HTTP/3 window differs from client contract")
+	}
+	for offset := uint32(0); offset < window; offset += streamChunk {
+		if err := peer.Receive([]cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: offset, Body: make([]byte, streamChunk)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.budget != 0 || s.grant != 0 || len(s.input) > window/streamChunk+1 {
+		t.Fatal("HTTP/3 input bound or premature credit")
+	}
+	if err := peer.Receive([]cell.Frame{{Kind: cell.Data, Stream: 1, Sequence: window, Body: []byte{1}}}); err == nil {
+		t.Fatal("HTTP/3 window bypass")
 	}
 }

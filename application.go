@@ -155,7 +155,7 @@ func loadApplication(root string) (application applicationFiles, err error) {
 	}
 	application = applicationFiles{assets: map[string]applicationAsset{"/": {body: body, mime: "text/html; charset=utf-8"}}, resources: resources, directory: directory, bodyBytes: uint64(len(body))}
 	h := sha256.New()
-	snapshotField(h, []byte("naivefox-site-v2"))
+	snapshotField(h, []byte("naivefox-site"))
 	rootDigest := sha256.Sum256(body)
 	snapshotField(h, rootDigest[:])
 	for _, resource := range resources {

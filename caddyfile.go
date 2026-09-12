@@ -1,11 +1,12 @@
 package transport
 
 import (
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/caddyserver/forwardproxy"
 	"strconv"
+	"time"
 )
 
 func init() {
@@ -17,8 +18,7 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 	return t, t.UnmarshalCaddyfile(h.Dispenser)
 }
 
-// UnmarshalCaddyfile reads the handler's explicit configuration. Use it inside
-// a route block with one nested forward_proxy for both transports.
+// UnmarshalCaddyfile reads the single NaiveFox handler configuration.
 func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	seen := make(map[string]bool)
 	for d.Next() {
@@ -27,7 +27,7 @@ func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		}
 		for d.NextBlock(0) {
 			name := d.Val()
-			if seen[name] {
+			if seen[name] && name != "basic_auth" && name != "allow" && name != "deny" {
 				return d.Errf("duplicate naivefox_transport option %q", name)
 			}
 			seen[name] = true
@@ -51,15 +51,42 @@ func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.Err("max_sessions must be a positive integer")
 				}
 				t.MaxSessions = limit
-			case "key", "allowed_targets":
-				return d.Errf("%s was removed; nest forward_proxy inside naivefox_transport and configure basic_auth once for both transports", name)
-			case "forward_proxy":
-				t.ForwardProxy = new(forwardproxy.Handler)
-				if err := t.ForwardProxy.UnmarshalCaddyfile(d.NewFromNextSegment()); err != nil {
-					return err
+			case "basic_auth":
+				var credential Credential
+				if !d.AllArgs(&credential.Username, &credential.Password) {
+					return d.ArgErr()
 				}
-			case "profile":
-				if !d.AllArgs(&t.Profile) {
+				t.Access.Credentials = append(t.Access.Credentials, credential)
+			case "allow", "deny":
+				subjects := d.RemainingArgs()
+				if len(subjects) == 0 {
+					return d.ArgErr()
+				}
+				t.Access.ACL = append(t.Access.ACL, ACLRule{Subjects: subjects, Allow: name == "allow"})
+			case "ports":
+				values := d.RemainingArgs()
+				if len(values) == 0 {
+					return d.ArgErr()
+				}
+				for _, value := range values {
+					port, err := strconv.Atoi(value)
+					if err != nil || port < 1 || port > 65535 {
+						return d.Err("invalid port")
+					}
+					t.Access.AllowedPorts = append(t.Access.AllowedPorts, port)
+				}
+			case "dial_timeout":
+				var value string
+				if !d.AllArgs(&value) {
+					return d.ArgErr()
+				}
+				duration, err := time.ParseDuration(value)
+				if err != nil || duration <= 0 {
+					return d.Err("invalid dial_timeout")
+				}
+				t.Access.DialTimeout = caddy.Duration(duration)
+			case "upstream":
+				if !d.AllArgs(&t.Access.Upstream) {
 					return d.ArgErr()
 				}
 			case "stats_path":

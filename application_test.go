@@ -74,7 +74,7 @@ func TestExternalApplicationSnapshotAndActualBodies(t *testing.T) {
 	writeApplicationFile(t, root, "index.html", customRoot)
 	writeApplicationFile(t, root, "assets/app.js", customScript)
 
-	module := &Transport{ApplicationRoot: root, ForwardProxy: testForwardProxy()}
+	module := &Transport{ApplicationRoot: root, Access: testAccess()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestProductionTemplateContainsNoTransportRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, token := range []string{
-		"__NFC", "NFC1", "/api/sync", "/api/realtime",
+		"__NFC", "NFOX", "/api/sync", "/api/realtime",
 		"__NFC_READER__", "__NFC_LIFECYCLE__", "__NFC_PROFILE__",
 	} {
 		if bytes.Contains(body, []byte(token)) {
@@ -149,7 +149,7 @@ func TestProductionTemplateContainsNoTransportRuntime(t *testing.T) {
 }
 
 func TestProvisionRequiresExternalApplicationRoot(t *testing.T) {
-	module := &Transport{ForwardProxy: testForwardProxy()}
+	module := &Transport{Access: testAccess()}
 	err := module.Provision(testCaddyContext(t))
 	if err == nil || !strings.Contains(err.Error(), "application_root is required") {
 		t.Fatalf("missing application_root provision result: %v", err)

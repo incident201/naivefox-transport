@@ -1,6 +1,6 @@
 # NaiveFox public site template
 
-This directory is an example site for the `native-stream-v2` server and client.
+This directory is an example site for the `NaiveFox` server and client.
 Its existing CSS, JavaScript and four SVGs are ordinary example files; their
 names and counts are not a transport requirement.
 
@@ -48,28 +48,22 @@ See the canonical [site requirements](https://github.com/incident201/naivefox-tr
 for supported markup, URL rules, streaming behavior, size recommendations,
 snapshot memory costs, update behavior and unsupported automatic resource types.
 
-Configure one combined Caddy binary:
+Configure Caddy with the matching NaiveFox module:
 
 ```caddyfile
-:443, proxy.example.com {
+proxy.example.com {
     route {
         naivefox_transport {
             application_root /etc/caddy/my-site
-            forward_proxy {
-                basic_auth USER PASSWORD
-                hide_ip
-                hide_via
-                probe_resistance
-            }
+            basic_auth USER PASSWORD
         }
         respond 404
     }
 }
 ```
 
-Keep both site addresses and move any existing forward_proxy block inside
-naivefox_transport. No additional root or file_server block is needed.
+No additional root or file_server block is needed.
 Keep private keys, logs and configuration outside the public directory.
 Validate the complete site and Caddyfile, then reload the service.
-Upgrade NaiveFox and the server together. Only the current native-stream-v2
+Upgrade NaiveFox and the server together. Only the current NaiveFox
 implementation is supported. This instruction is kept outside the public template.

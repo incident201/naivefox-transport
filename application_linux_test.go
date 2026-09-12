@@ -102,7 +102,7 @@ func TestApplicationDirectoryLifetime(t *testing.T) {
 			t.Fatal("failed proxy provisioning leaked the application root")
 		}
 	}
-	module := &Transport{ApplicationRoot: root, ForwardProxy: testForwardProxy(), StatsPath: t.TempDir()}
+	module := &Transport{ApplicationRoot: root, Access: testAccess(), StatsPath: t.TempDir()}
 	if err := module.Provision(testCaddyContext(t)); err != nil {
 		t.Fatal(err)
 	}

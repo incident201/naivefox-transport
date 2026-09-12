@@ -4,12 +4,10 @@ go 1.25.0
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.2
-	github.com/caddyserver/forwardproxy v0.0.0-20250118002110-d62c80d3dd2c
 	github.com/gorilla/websocket v1.5.3
+	go.uber.org/zap v1.27.1
 	golang.org/x/net v0.51.0
 )
-
-replace github.com/caddyserver/forwardproxy => github.com/klzgrad/forwardproxy v0.0.0-20250118002110-d62c80d3dd2c
 
 require (
 	cel.dev/expr v0.25.1 // indirect
@@ -109,7 +107,6 @@ require (
 	go.step.sm/crypto v0.76.2 // indirect
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.1 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect

@@ -6,5 +6,4 @@ output=${1:-$transport_root/artifacts/bin}
 mkdir -p "$output"
 bash "$transport_root/tools/go.sh" "${XCADDY:-xcaddy}" build v2.11.2 \
   --output "$output/caddy" \
-  --with github.com/caddyserver/forwardproxy@v0.0.0-20250118002110-d62c80d3dd2c=github.com/klzgrad/forwardproxy@v0.0.0-20250118002110-d62c80d3dd2c \
   --with "github.com/incident201/naivefox-transport=$transport_root"

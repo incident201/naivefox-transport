@@ -34,7 +34,7 @@ func (d *StreamDecoder) Push(part []byte, final bool) (frames []Frame, err error
 		b := d.body
 		d.used = int(binary.BigEndian.Uint32(b[8:12]))
 		d.count = int(binary.BigEndian.Uint16(b[12:14]))
-		if string(b[:4]) != "NFC1" || binary.BigEndian.Uint32(b[4:8]) != d.sequence || b[14] != 0 || b[15] != 0 || d.used < Header || d.used > MaxCell || d.count > 4096 {
+		if string(b[:4]) != "NFOX" || binary.BigEndian.Uint32(b[4:8]) != d.sequence || b[14] != 0 || b[15] != 0 || d.used < Header || d.used > MaxCell || d.count > 4096 {
 			return nil, bad
 		}
 		d.offset = Header
