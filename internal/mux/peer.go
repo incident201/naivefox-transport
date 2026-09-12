@@ -107,14 +107,19 @@ func (p *Peer) Changes() <-chan struct{} { return p.changes }
 func (p *Peer) Done() <-chan struct{}    { return p.ctx.Done() }
 
 type Pressure struct {
-	Streams  int   `json:"streams"`
-	Readable int   `json:"readable"`
-	Bytes    int64 `json:"bytes"`
-	Queued   int64 `json:"queued"`
-	Controls int   `json:"controls"`
+	FrameOverhead int64 `json:"frame_overhead"`
+	Streams       int   `json:"streams"`
+	Readable      int   `json:"readable"`
+	Bytes         int64 `json:"bytes"`
+	Queued        int64 `json:"queued"`
+	Controls      int   `json:"controls"`
 }
 
-func (p *Peer) Pressure() Pressure {
+func (p *Peer) Pressure() Pressure { return p.pressure(0) }
+
+func (p *Peer) PressureWithCreditFloor(floor int64) Pressure { return p.pressure(floor) }
+
+func (p *Peer) pressure(floor int64) Pressure {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	state := Pressure{Streams: len(p.streams)}
@@ -123,7 +128,30 @@ func (p *Peer) Pressure() Pressure {
 			state.Readable++
 		}
 		queued := s.queuedBytes.Load()
-		state.Bytes += min(queued, int64(s.credit))
+		ready := min(queued, int64(s.credit))
+		if s.reset || s.localFinSent || (ready < floor && queued > ready) {
+			ready = 0
+		}
+		state.Bytes += ready
+		if ready > 0 {
+			// Include a partially consumed first DATA frame.
+			state.FrameOverhead += ((ready+streamChunk-1)/streamChunk + 1) * cell.FrameHeader
+		}
+		if s.open != nil {
+			state.FrameOverhead += int64(s.open.Size())
+		}
+		if s.ack {
+			state.FrameOverhead += cell.FrameHeader
+		}
+		if s.reset {
+			state.FrameOverhead += cell.FrameHeader
+		}
+		if s.grant > 0 {
+			state.FrameOverhead += cell.FrameHeader + 4
+		}
+		if queued == 0 && (s.pending != nil || len(s.output) > 0) {
+			state.FrameOverhead += cell.FrameHeader
+		}
 		state.Queued += queued
 		if s.open != nil || s.ack || s.reset || s.grant > 0 || (s.queuedBytes.Load() == 0 && (s.pending != nil || len(s.output) > 0)) {
 			state.Controls++
@@ -265,6 +293,10 @@ func (p *Peer) write(s *stream, conn net.Conn) {
 			}
 			p.mu.Lock()
 			s.remoteFinWritten = true
+			if s.localFinSent && s.grant == 0 && p.streams[s.id] == s {
+				s.close()
+				p.removeStream(s.id)
+			}
 			p.mu.Unlock()
 			return
 		}
@@ -400,7 +432,11 @@ func (p *Peer) Receive(frames []cell.Frame) error {
 	return nil
 }
 
-func (p *Peer) Take(budget int) []cell.Frame {
+func (p *Peer) Take(budget int) []cell.Frame { return p.take(budget, false) }
+
+func (p *Peer) TakeControls(budget int) []cell.Frame { return p.take(budget, true) }
+
+func (p *Peer) take(budget int, controlsOnly bool) []cell.Frame {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	frames := []cell.Frame{}
@@ -448,10 +484,14 @@ func (p *Peer) Take(budget int) []cell.Frame {
 			}
 			if s.pending != nil {
 				if s.pending.Kind == cell.Data {
+					if controlsOnly {
+						misses++
+						continue
+					}
 					n := min(len(s.pending.Body), budget-cell.FrameHeader, int(s.credit))
 					if n > 0 {
 						value := *s.pending
-						value.Body = append([]byte(nil), value.Body[:n]...)
+						value.Body = value.Body[:n:n]
 						f = &value
 						s.pending.Body = s.pending.Body[n:]
 						s.pending.Sequence += uint32(n)

@@ -38,13 +38,16 @@ func Encode(sequence uint32, capacity int, frames []Frame) ([]byte, error) {
 	}
 	used := Header
 	for _, f := range frames {
+		if f.Kind < Open || f.Kind > Hello || capacity-used < FrameHeader || len(f.Body) > capacity-used-FrameHeader {
+			return nil, errors.New("invalid frame or cell overflow")
+		}
 		used += f.Size()
 	}
 	if used > capacity {
 		return nil, errors.New("cell overflow")
 	}
 	body := make([]byte, capacity)
-	if _, err := rand.Read(body); err != nil {
+	if _, err := rand.Read(body[used:]); err != nil {
 		return nil, err
 	}
 	copy(body, "NFC1")
@@ -72,7 +75,7 @@ func Decode(body []byte) (uint32, []Frame, int, error) {
 	seq := binary.BigEndian.Uint32(body[4:8])
 	used := int(binary.BigEndian.Uint32(body[8:12]))
 	count := int(binary.BigEndian.Uint16(body[12:14]))
-	if used < Header || used > len(body) || count > 4096 {
+	if used < Header || used > len(body) || count > 4096 || count > (used-Header)/FrameHeader {
 		return 0, nil, 0, bad
 	}
 	frames := make([]Frame, 0, count)

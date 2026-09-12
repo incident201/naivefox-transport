@@ -11,11 +11,34 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/gorilla/websocket"
 	"github.com/incident201/naivefox-transport/internal/cell"
+	"github.com/incident201/naivefox-transport/internal/mux"
 )
 
 const realtimeProtocol = "nfc1.stream.v1"
 
-func realtimeReadyDownCapacity(bytes int64) int {
+const realtimeCreditFloor = 8192 - cell.Header - cell.FrameHeader
+
+func realtimeFramedBytes(pressure mux.Pressure) int64 {
+	// An omitted ACK must not demote credit returned by a full cell.
+	return pressure.Bytes + pressure.FrameOverhead + cell.Header + cell.FrameHeader
+}
+
+func realtimeReadyDownCapacity(pressure mux.Pressure) int {
+	if pressure.Bytes == 0 {
+		return 512
+	}
+	size := realtimeFramedBytes(pressure)
+	switch {
+	case size >= cell.MaxCell:
+		return cell.MaxCell
+	case size >= 65536:
+		return 65536
+	default:
+		return 8192
+	}
+}
+
+func realtimeCoalescingDownCapacity(bytes int64) int {
 	switch {
 	case bytes >= 131072:
 		return cell.MaxCell
@@ -250,12 +273,40 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	return nil
 }
 
+func waitRealtimeCoalesce(ctx context.Context, s *session, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-s.peer.Done():
+			return false
+		default:
+		}
+		pressure := s.peer.PressureWithCreditFloor(realtimeCreditFloor)
+		if pressure.Bytes == 0 || realtimeReadyDownCapacity(pressure) == cell.MaxCell {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-s.peer.Done():
+			return false
+		case <-timer.C:
+			return true
+		case <-s.peer.Changes():
+		case <-s.wake:
+		}
+	}
+}
+
 func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *session, idleInterval time.Duration) {
 	heartbeat := time.NewTimer(idleInterval)
 	defer heartbeat.Stop()
 	for {
 		idleHeartbeat := false
-		pressure := s.peer.Pressure()
+		pressure := s.peer.PressureWithCreditFloor(realtimeCreditFloor)
 		s.mu.Lock()
 		ack := s.ackPending
 		s.mu.Unlock()
@@ -272,28 +323,23 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			case <-s.wake:
 				continue
 			}
-		} else if pressure.Bytes > 0 {
-			capacity := realtimeReadyDownCapacity(pressure.Bytes)
-			if pressure.Bytes < int64(capacity) {
-				coalesce := time.NewTimer(2 * time.Millisecond)
-				select {
-				case <-ctx.Done():
-					coalesce.Stop()
-					return
-				case <-s.peer.Done():
-					coalesce.Stop()
-					return
-				case <-coalesce.C:
-				}
+		} else if pressure.Bytes > 0 && realtimeFramedBytes(pressure) < int64(realtimeCoalescingDownCapacity(pressure.Bytes)) {
+			if !waitRealtimeCoalesce(ctx, s, 2*time.Millisecond) {
+				return
 			}
 		}
+
 		s.mu.Lock()
-		pressure = s.peer.Pressure()
+		pressure = s.peer.PressureWithCreditFloor(realtimeCreditFloor)
 		if s.down == ^uint32(0) {
 			s.mu.Unlock()
 			return
 		}
-		capacity := realtimeReadyDownCapacity(pressure.Bytes)
+		if !idleHeartbeat && pressure.Bytes == 0 && pressure.Controls == 0 && !s.ackPending {
+			s.mu.Unlock()
+			continue
+		}
+		capacity := realtimeReadyDownCapacity(pressure)
 		frames := []cell.Frame{}
 		budget := capacity - cell.Header
 		if s.ackPending {
@@ -301,7 +347,23 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 			budget -= cell.FrameHeader
 			s.ackPending = false
 		}
-		frames = append(frames, s.peer.Take(budget)...)
+		if pressure.Bytes == 0 {
+			frames = append(frames, s.peer.TakeControls(budget)...)
+		} else {
+			frames = append(frames, s.peer.Take(budget)...)
+		}
+		if len(frames) == 0 && !idleHeartbeat {
+			s.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.peer.Done():
+				return
+			case <-s.peer.Changes():
+			case <-s.wake:
+			}
+			continue
+		}
 		body, err := cell.Encode(s.down, capacity, frames)
 		if err == nil {
 			s.down++

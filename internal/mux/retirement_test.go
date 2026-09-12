@@ -5,6 +5,7 @@ import (
 	"net"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/incident201/naivefox-transport/internal/cell"
 )
@@ -120,5 +121,33 @@ func TestChurnDoesNotRelaxActiveStreamLimit(t *testing.T) {
 		if len(peer.order) != 0 || peer.cursor != 0 {
 			t.Fatal("empty scheduler retained state")
 		}
+	}
+}
+
+func TestDeliveredFinRetiresWithoutAnotherTake(t *testing.T) {
+	peer := New(nil)
+	defer peer.Close()
+	peer.mu.Lock()
+	s := peer.newStream(1)
+	local, remote := net.Pipe()
+	defer remote.Close()
+	s.localFinSent = true
+	peer.attach(s, local)
+	peer.mu.Unlock()
+	if err := peer.Receive([]cell.Frame{{Kind: cell.Fin, Stream: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		peer.mu.Lock()
+		retired := len(peer.streams) == 0 && len(peer.order) == 0
+		peer.mu.Unlock()
+		if retired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("delivered FIN retained a stream until the next cell")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

@@ -62,3 +62,25 @@ func TestMalformedCellsFailClosed(t *testing.T) {
 		t.Fatal("accepted overflow")
 	}
 }
+
+func TestEncodeRandomizesOnlyUnusedSuffix(t *testing.T) {
+	frames := []Frame{{Kind: Data, Stream: 1, Body: bytes.Repeat([]byte{0x5a}, 4096-Header-FrameHeader)}}
+	first, err := Encode(7, 4096, frames)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Encode(7, 4096, frames)
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatal("full cells differ", err)
+	}
+	first, _ = Encode(7, 8192, frames)
+	second, _ = Encode(7, 8192, frames)
+	if !bytes.Equal(first[:4096], second[:4096]) || bytes.Equal(first[4096:], second[4096:]) {
+		t.Fatal("used prefix or fresh filler differs")
+	}
+	for _, kind := range []byte{0, Hello + 1} {
+		if _, err := Encode(0, 512, []Frame{{Kind: kind}}); err == nil {
+			t.Fatal("invalid kind")
+		}
+	}
+}

@@ -448,15 +448,45 @@ func TestRealtimeIdleAccountingExcludesAcknowledgements(t *testing.T) {
 
 func TestRealtimeReadyDownCapacityDoesNotSpendBulkOnFragmentedCredits(t *testing.T) {
 	for _, tc := range []struct {
-		bytes    int64
-		capacity int
+		bytes, overhead int64
+		capacity        int
 	}{
-		{0, 512}, {1, 8192}, {16384, 8192}, {32767, 8192},
-		{32768, 65536}, {65536, 65536}, {131071, 65536},
-		{131072, cell.MaxCell}, {524288, cell.MaxCell},
+		{0, 640, 512}, {1, 32, 8192}, {32768, 48, 8192},
+		{65424, 80, 65536}, {65456, 80, 65536},
+		{135468, 160, 65536}, {197392, 224, 65536},
+		{261840, 272, cell.MaxCell}, {261872, 272, cell.MaxCell},
 	} {
-		if got := realtimeReadyDownCapacity(tc.bytes); got != tc.capacity {
-			t.Fatalf("sendable=%d capacity=%d expected=%d", tc.bytes, got, tc.capacity)
+		pressure := mux.Pressure{Bytes: tc.bytes, FrameOverhead: tc.overhead}
+		if got := realtimeReadyDownCapacity(pressure); got != tc.capacity {
+			t.Fatalf("sendable=%d overhead=%d capacity=%d expected=%d", tc.bytes, tc.overhead, got, tc.capacity)
+		}
+	}
+}
+
+func TestFullCellCreditKeepsCapacityWithoutNextAck(t *testing.T) {
+	lengths := []int{256, 16384, 16384, 16384, 16016}
+	frames := []cell.Frame{}
+	offset := uint32(0)
+	for _, length := range lengths {
+		frames = append(frames, cell.Frame{Kind: cell.Data, Stream: 1, Sequence: offset, Body: make([]byte, length)})
+		offset += uint32(length)
+	}
+	pressure := mux.Pressure{Bytes: int64(offset), FrameOverhead: int64(len(frames) * cell.FrameHeader)}
+	if capacity := realtimeReadyDownCapacity(pressure); capacity != 65536 {
+		t.Fatalf("returned full-cell credit dropped a tier: %d", capacity)
+	}
+	for _, ack := range []bool{false, true} {
+		selected := append([]cell.Frame(nil), frames...)
+		if ack {
+			selected = append([]cell.Frame{{Kind: cell.Ack}}, selected...)
+		}
+		body, err := cell.Encode(0, 65536, selected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, filler, err := cell.Decode(body)
+		if err != nil || filler > cell.FrameHeader {
+			t.Fatalf("unexpected framing slack: %d %v", filler, err)
 		}
 	}
 }
