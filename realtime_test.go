@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,7 +98,7 @@ func (f *realtimeFixture) bootstrap(auth bool, extra []cell.Frame) {
 			f.t.Fatalf("startup POST %d: %d", round, status)
 		}
 		f.up++
-		status, response := f.request("GET", startupPath(round), nil)
+		status, response := f.request("GET", startupPath(round)+"?seq="+strconv.Itoa(round), nil)
 		seq, received, _, err := cell.Decode(response)
 		if round == 0 && (len(received) != 1 || received[0].Kind != cell.Hello ||
 			received[0].Stream != 0 || received[0].Sequence != 0 ||

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ type Transport struct {
 }
 
 type counters struct {
+	StartupReplays   uint64            `json:"startup_replays"`
 	H3Opened         uint64            `json:"h3_opened"`
 	H3Closed         uint64            `json:"h3_closed"`
 	H3Uploads        uint64            `json:"h3_uploads"`
@@ -79,32 +81,36 @@ type counters struct {
 }
 
 type session struct {
-	mu             sync.Mutex
-	ip             string
-	last           time.Time
-	authed         bool
-	up             uint32
-	down           uint32
-	peer           *mux.Peer
-	wake           chan struct{}
-	startupSteps   int
-	startupInvalid bool
-	httpActive     int
-	h3Active       int
-	h3             bool
-	uploadMu       sync.Mutex
-	pendingUploads map[uint32]*pendingUpload
-	realtime       bool
-	realtimeConn   io.Closer
-	ackPending     bool
-	ackSequence    uint32
-	wsStartupUp    uint32
-	wsStartupDown  uint32
+	mu              sync.Mutex
+	ip              string
+	last            time.Time
+	authed          bool
+	up              uint32
+	down            uint32
+	peer            *mux.Peer
+	wake            chan struct{}
+	startupSteps    int
+	startupInvalid  bool
+	startupDeadline time.Time
+	startupJournal  [40]*startupResult
+	startupBytes    int64
+	h3Active        int
+	h3              bool
+	uploadMu        sync.Mutex
+	pendingUploads  map[uint32]*pendingUpload
+	realtime        bool
+	realtimeConn    io.Closer
+	ackPending      bool
+	ackSequence     uint32
+	wsStartupUp     uint32
+	wsStartupDown   uint32
 }
 
 func (s *session) close() {
 	s.mu.Lock()
 	conn := s.realtimeConn
+	s.startupInvalid = true
+	s.clearStartupLocked()
 	s.mu.Unlock()
 	if conn != nil {
 		conn.Close()
@@ -165,7 +171,7 @@ func (t *Transport) expire(now time.Time) {
 	defer t.mu.Unlock()
 	for id, s := range t.sessions {
 		s.mu.Lock()
-		expired := now.Sub(s.last) > 2*time.Minute
+		expired := now.Sub(s.last) > 2*time.Minute || (!s.realtime && !s.startupDeadline.IsZero() && !now.Before(s.startupDeadline))
 		s.mu.Unlock()
 		if expired {
 			s.close()
@@ -202,10 +208,40 @@ func (t *Transport) Cleanup() (err error) {
 	return nil
 }
 
-func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session, error) {
+func responseCacheControl(r *http.Request, public bool) string {
+	value := "no-store"
+	if public {
+		value = "public, max-age=3600"
+	}
+	if trusted, _ := caddyhttp.GetVar(r.Context(), caddyhttp.TrustedProxyVarKey).(bool); trusted {
+		value += ", no-transform"
+	}
+	return value
+}
+
+func sessionClientIP(r *http.Request) (string, error) {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return nil, errors.New("peer")
+		return "", errors.New("peer")
+	}
+	if trusted, _ := caddyhttp.GetVar(r.Context(), caddyhttp.TrustedProxyVarKey).(bool); trusted {
+		clientIP, ok := caddyhttp.GetVar(r.Context(), caddyhttp.ClientIPVarKey).(string)
+		if !ok {
+			return "", errors.New("trusted client IP unavailable")
+		}
+		ip = clientIP
+	}
+	address, err := netip.ParseAddr(ip)
+	if err != nil {
+		return "", errors.New("invalid client IP")
+	}
+	return address.Unmap().String(), nil
+}
+
+func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session, error) {
+	ip, err := sessionClientIP(r)
+	if err != nil {
+		return nil, err
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -314,7 +350,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Cache-Control", responseCacheControl(r, false))
 		return json.NewEncoder(w).Encode(t.stats)
 	}
 	path := r.URL.Path
@@ -343,10 +379,10 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	t.stats.Protocols[protocolLabel]++
 	t.mu.Unlock()
 	if isAsset {
-		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Cache-Control", responseCacheControl(r, false))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if path != "/" {
-			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Cache-Control", responseCacheControl(r, true))
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {
 			return t.decline(w, r, next)
@@ -405,143 +441,7 @@ func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			return nil
 		}
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	observer, ok := s.beginHTTP(w, r)
-	if !ok {
-		t.reject(w)
-		return nil
-	}
-	w = observer
-	defer t.finishHTTP(s, observer, r)
-	if path == "/api/sync" {
-		const capacity = 4096
-		if r.Method != "POST" {
-			t.reject(w)
-			return nil
-		}
-		if r.Context().Err() != nil {
-			t.reject(w)
-			return nil
-		}
-		used := 0
-		for _, f := range frames {
-			used += f.Size()
-		}
-		if used > capacity-cell.Header {
-			t.reject(w)
-			return nil
-		}
-		// Body reads belong to this request, never to the shared session lock.
-		// Expiry and cleanup must remain able to close a stalled upload's peer.
-		s.mu.Lock()
-		if r.Context().Err() != nil || sequence != s.up {
-			s.mu.Unlock()
-			t.reject(w)
-			return nil
-		}
-		select {
-		case <-s.peer.Done():
-			s.mu.Unlock()
-			t.reject(w)
-			return nil
-		default:
-		}
-		useful, opens := uint64(0), uint64(0)
-		if len(frames) > 0 && frames[0].Kind == cell.Auth {
-			f := frames[0]
-			if s.authed || len(frames) != 1 || f.Stream != 0 || f.Sequence != 0 || !t.authenticate(f.Body) {
-				s.mu.Unlock()
-				t.reject(w)
-				return nil
-			}
-			s.authed = true
-			frames = frames[1:]
-		}
-		if !s.authed || (len(frames) > 0 && s.startupSteps < 2) {
-			s.mu.Unlock()
-			t.reject(w)
-			return nil
-		}
-		for _, f := range frames {
-			if f.Kind == cell.Data {
-				useful += uint64(len(f.Body))
-			}
-			if f.Kind == cell.Open {
-				opens++
-			}
-		}
-		if err := s.peer.Receive(frames); err != nil {
-			s.peer.Close()
-			s.mu.Unlock()
-			t.reject(w)
-			return nil
-		}
-		s.up++
-		select {
-		case s.wake <- struct{}{}:
-		default:
-		}
-		s.mu.Unlock()
-		t.mu.Lock()
-		t.stats.UploadBytes += uint64(len(body))
-		t.stats.UploadFiller += uint64(filler)
-		t.stats.UploadUseful += useful
-		t.stats.Opens += opens
-		t.mu.Unlock()
-		w.WriteHeader(204)
-		return nil
-	}
-	if r.Method != "GET" {
-		t.reject(w)
-		return nil
-	}
-	s.mu.Lock()
-	round := int(s.down)
-	s.mu.Unlock()
-	if round >= len(startupSlots) || path != startupPath(round) {
-		t.reject(w)
-		return nil
-	}
-	return t.downstream(w, s, startupSlots[round])
-}
-
-func (t *Transport) downstream(w http.ResponseWriter, s *session, capacity int) error {
-	s.mu.Lock()
-	var frames []cell.Frame
-	if s.down == 0 {
-		frames = []cell.Frame{{Kind: cell.Hello, Body: []byte(transportIdentity + "\n" + t.application.identity)}}
-	} else {
-		frames = s.peer.Take(capacity - cell.Header)
-	}
-	used, useful := 0, uint64(0)
-	for _, f := range frames {
-		used += f.Size()
-		if f.Kind == cell.Data {
-			useful += uint64(len(f.Body))
-		}
-	}
-	body, err := cell.Encode(s.down, capacity, frames)
-	s.down++
-	s.mu.Unlock()
-	if err != nil {
-		return err
-	}
-	t.mu.Lock()
-	t.stats.DownloadBytes += uint64(len(body))
-	t.stats.DownloadFiller += uint64(len(body) - cell.Header - used)
-	t.stats.DownloadUseful += useful
-	t.stats.CellCapacities[strconv.Itoa(capacity)]++
-	t.mu.Unlock()
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	_, err = w.Write(body)
-	if err != nil {
-		t.mu.Lock()
-		t.stats.WriteErrors++
-		t.mu.Unlock()
-	}
-	return err
+	return t.startup(w, r, s, body, sequence, frames, filler)
 }
 
 var _ caddy.Provisioner = (*Transport)(nil)

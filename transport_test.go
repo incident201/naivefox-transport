@@ -23,7 +23,7 @@ func TestStartupCapacityAndHTTPRetirement(t *testing.T) {
 	}
 }
 
-func TestStartupRejectsReplayAndMalformedEnvelope(t *testing.T) {
+func TestStartupAcceptsIdenticalRetryAndRejectsMalformedEnvelope(t *testing.T) {
 	for _, invalid := range []string{"replay", "capacity", "reserved"} {
 		t.Run(invalid, func(t *testing.T) {
 			f := newRealtimeFixture(t)
@@ -42,7 +42,7 @@ func TestStartupRejectsReplayAndMalformedEnvelope(t *testing.T) {
 			}
 			expected := 404
 			if invalid == "replay" {
-				expected = 400
+				expected = 204
 			}
 			if status, _ := f.request("POST", "/api/sync", body); status != expected {
 				t.Fatal("invalid upload accepted")

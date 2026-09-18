@@ -175,7 +175,7 @@ func TestConcurrentUploadsCommitOneSequence(t *testing.T) {
 	}
 	close(ready)
 	first, second := <-results, <-results
-	if !((first == 204 && second == 400) || (first == 400 && second == 204)) {
+	if first != 204 || second != 204 {
 		t.Fatalf("duplicate sequence results: %d, %d", first, second)
 	}
 	s := module.sessions[cookie.Value]

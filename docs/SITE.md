@@ -5,9 +5,8 @@ the complete public site. The module discovers startup resources from that HTML.
 There are no compulsory CSS, JavaScript or image filenames, resource counts,
 manifest files, generators or injected transport scripts.
 
-Both the server and NaiveFox must support `NaiveFox`. Older
-`native-stream-v1` clients/servers require a coordinated upgrade. Classic
-CONNECT and its separate fronting-page requirements are unchanged.
+Client and server implement one current NaiveFox contract and must be updated
+together. Old transports and wire versions are not supported.
 
 ## What is loaded
 
@@ -18,7 +17,7 @@ image or page are not recursively discovered.
 | Initial HTML | Native bootstrap |
 | --- | --- |
 | `<link rel="stylesheet" href="...">` | Unconditional stylesheet |
-| `<script defer src="..."></script>` | Classic deferred script, downloaded without execution |
+| `<script defer src="..."></script>` | Non-module deferred script, downloaded without execution |
 | `<img src="...">` | Simple eager image |
 | `<link rel="preload" as="image" href="...">` | Declared image |
 | `<link rel="icon" href="...">` or `rel="shortcut icon"` | Declared icon |
@@ -85,7 +84,7 @@ automatic retry or inter-carrier resource cache.
 
 The twenty NFOX POST/GET pairs remain an additional 960 KiB of body capacity per
 new carrier, with useful proxy data displacing filler where available. They
-still precede the persistent WebSocket. This site contract does not make an
+precede WSS on H2 or the persistent GET/finite POST carrier on H3. This site contract does not make an
 arbitrary site's JavaScript perform those transport exchanges.
 
 ## Memory snapshot and updates
@@ -94,7 +93,8 @@ At startup/reload, the module reads `index.html`, derives its selected
 inventory and loads those files into an immutable memory snapshot. It verifies
 the sources again before publication; verification uses a streaming read.
 Selected bytes and MIME types are served identically to browsers and native
-clients. Responses carry their actual Content-Length and no X-App-* headers.
+clients. Origin responses carry their actual Content-Length and no X-App-* headers.
+A proxy may remove Content-Length; the client still validates complete bodies.
 Snapshot identity is confirmed inside the authenticated carrier using the
 document and resource body digests, URLs, kinds and MIME types. There is no client-specific HTML or script
 injection.
@@ -118,16 +118,18 @@ fails before target opening without an automatic refetch loop. The identity prov
 secret or a replacement for TLS/authentication.
 
 The root is not cacheable. Selected public resources retain ordinary server
-cache headers; the native client nevertheless inhibits caching. Other files
+cache headers, adding no-transform for a configured trusted proxy; the native client nevertheless inhibits caching.
+CDN integration remains unfinished and unvalidated. Its proposed deployment
+requires cache bypass for the dedicated hostname; see [CDN.md](CDN.md). Other files
 support MIME types, Last-Modified, conditional requests and byte ranges with
 `Cache-Control: no-cache`. Directory index handling is supported without
 directory listing or a catch-all SPA fallback.
 
 `/index.html` redirects to `/`. Snapshot paths and `/api/sync`,
 `/api/events/brief`, `/api/events/state`, `/media/chunk/*`,
-`/api/realtime` and `/__lab/*` take priority over disk fallback.
+`/api/realtime`, `/api/stream`, `/api/upload` and `/__lab/*` take priority over disk fallback.
 Do not wrap transport/snapshot routes in a compression handler: the current
-native profile requires identity-encoded complete responses.
+native client requires identity-encoded complete responses.
 
 Keep credentials, Caddy configuration, private keys and logs outside the public
 directory. Prepare a complete new directory for atomic whole-site changes,

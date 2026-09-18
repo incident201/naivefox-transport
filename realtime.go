@@ -51,40 +51,6 @@ func realtimeCoalescingDownCapacity(bytes int64) int {
 	}
 }
 
-type observedResponse struct {
-	http.ResponseWriter
-	status int
-	failed bool
-}
-
-func (w *observedResponse) WriteHeader(status int) {
-	if w.status == 0 {
-		w.status = status
-	}
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *observedResponse) Write(body []byte) (int, error) {
-	if w.status == 0 {
-		w.status = http.StatusOK
-	}
-	n, err := w.ResponseWriter.Write(body)
-	w.failed = w.failed || err != nil || n != len(body)
-	return n, err
-}
-
-func (w *observedResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-func (s *session) beginHTTP(w http.ResponseWriter, r *http.Request) (*observedResponse, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.realtime || s.startupInvalid || s.startupSteps >= 40 {
-		return nil, false
-	}
-	s.httpActive++
-	return &observedResponse{ResponseWriter: w}, true
-}
-
 func startupPath(round int) string {
 	if round < 4 || round >= 18 {
 		return "/api/events/brief"
@@ -93,30 +59,6 @@ func startupPath(round int) string {
 		return "/api/events/state"
 	}
 	return "/media/chunk/" + strconv.Itoa(round)
-}
-
-func (t *Transport) finishHTTP(s *session, w *observedResponse, r *http.Request) {
-	s.mu.Lock()
-	s.httpActive--
-	completed := false
-	if !s.startupInvalid && s.startupSteps < 40 {
-		method, path, status := http.MethodPost, "/api/sync", http.StatusNoContent
-		if s.startupSteps%2 == 1 {
-			method, path, status = http.MethodGet, startupPath(s.startupSteps/2), http.StatusOK
-		}
-		if r.Method != method || r.URL.Path != path || w.failed || w.status != status {
-			s.startupInvalid = true
-		} else {
-			s.startupSteps++
-			completed = s.startupSteps == 40
-		}
-	}
-	s.mu.Unlock()
-	if completed {
-		t.mu.Lock()
-		t.stats.StartupCompleted++
-		t.mu.Unlock()
-	}
 }
 
 func (t *Transport) realtime(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
@@ -142,7 +84,7 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request, next caddyh
 		}
 	}
 	s.mu.Lock()
-	ready := !s.h3 && protocol != "" && !s.realtime && !s.startupInvalid && s.startupSteps == 40 && s.up >= 20 && s.down >= 20 && s.httpActive == 0
+	ready := !s.h3 && protocol != "" && !s.realtime && !s.startupInvalid && time.Now().Before(s.startupDeadline) && s.startupSteps == 40 && s.up >= 20 && s.down >= 20
 	select {
 	case <-s.peer.Done():
 		ready = false
@@ -150,6 +92,7 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request, next caddyh
 	}
 	if ready {
 		s.realtime = true
+		s.clearStartupLocked()
 	}
 	s.mu.Unlock()
 	if !ready {

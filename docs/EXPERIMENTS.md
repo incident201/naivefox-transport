@@ -1,12 +1,12 @@
 # Historical transport experiments
 
-The finite HTTP profiles, browser worker, local WSS bridge, generic hybrid and
-pressure-hint experiments are retired. Their source, tests and measured outcomes
-remain in Git history. They are not supported configuration choices.
+Retired experiments and their measured outcomes remain in Git history.
+They are not supported configuration choices or acceptance results.
 
-Current production behavior is defined in [PROTOCOL.md](PROTOCOL.md); current
-site layout and server configuration are in the [deployment instructions](../README.md#site-directory-and-caddyfile). The native
-client's CAPTURE.md preserves the measured original labels and explains the
-promotion of the productive shaped-WebSocket implementation to no-connect.
-Classic remains the default. New measurements must identify current source,
-runtime and application inputs rather than silently relabel historical data.
+There is one current NaiveFox transport with H2 and H3 adapters. Update client
+and server together. Current behavior is defined in [PROTOCOL.md](PROTOCOL.md);
+deployment is described in [README.md](../README.md).
+
+New measurements must identify current source, runtime and application inputs.
+Keep the established five-window analysis and preserve adverse results; do not
+silently relabel historical data as evidence for the current implementation.

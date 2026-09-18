@@ -1,8 +1,8 @@
 # NaiveFox transport for Caddy
 
 This module is the server for the single current NaiveFox transport. Update
-client and server together. Classic NaiveProxy, older wire versions, profile
-selection and migration fallbacks are not supported. CONNECT is not prohibited
+client and server together. Only the current matching pair is supported;
+there are no alternate transports, wire versions or migration fallbacks. CONNECT is not prohibited
 by the architecture; it is simply not needed for this carrier.
 
 Firefox clients use native Necko/NSS/Neqo. The server uses Caddy's HTTP/TLS/QUIC
@@ -18,7 +18,7 @@ Build Caddy with this module:
 xcaddy build --with github.com/incident201/naivefox-transport
 ~~~
 
-The module has no dependency on the classic forwardproxy handler.
+The module owns its authentication, destination policy and transport.
 
 ~~~caddyfile
 proxy.example {
@@ -76,6 +76,11 @@ Only one persistent carrier may attach to an authenticated session after its
 twenty-pair startup. Unauthenticated requests fall through to ordinary site
 handling. TLS protects credentials and payload; unused cell suffixes use fresh
 cryptographic randomness.
+
+Direct H2/H3 is the supported deployment. **CDN support is work in progress
+and is not validated for production use.** Local reverse-proxy tests exist,
+but complete end-to-end testing with a real provider has not been performed.
+CDN integration is currently deferred. See [docs/CDN.md](docs/CDN.md).
 
 See [docs/PROTOCOL.md](docs/PROTOCOL.md) for wire details and
 [docs/SITE.md](docs/SITE.md) for the public site. Tests cover authentication,

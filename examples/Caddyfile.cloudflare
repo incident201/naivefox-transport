@@ -1,0 +1,27 @@
+# Development example only: CDN integration is unfinished and unvalidated.
+# Supply cloudflare-trusted.caddy with verified provider ranges before testing.
+{
+    admin off
+    auto_https disable_redirects
+    servers {
+        protocols h1 h2
+        import cloudflare-trusted.caddy
+        trusted_proxies_strict
+        client_ip_headers CF-Connecting-IP
+    }
+}
+
+{$NF_HOST} {
+    tls {$NF_TLS_CERT} {$NF_TLS_KEY}
+    log {
+        output file {$NF_ACCESS_LOG}
+    }
+    route {
+        naivefox_transport {
+            application_root {$NF_APPLICATION_ROOT}
+            basic_auth "{$NF_USER}" "{$NF_PASSWORD}"
+            max_sessions 128
+        }
+        respond 404
+    }
+}

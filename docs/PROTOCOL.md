@@ -12,7 +12,8 @@ with earlier releases. Historical variants remain in Git history.
 2. GET / returns actual nonempty UTF-8 index.html and an ordinary random
    Secure/HttpOnly session cookie. No public response contains X-App-* metadata.
    HEAD is supported without creating a session. The cookie is retained on
-   carrier requests and bound to the client IP; it is not authentication.
+   carrier requests and bound to Caddy's verified client IP when a trusted proxy
+   is configured, otherwise the direct peer IP; it is not authentication.
 3. Discover all supported directly declared resources from that HTML and complete
    their GETs, at most six at a time. Names, number and body sizes come from the
    site; there is no site-byte budget or space padding. Bodies are streamed.
@@ -25,7 +26,7 @@ with earlier releases. Historical variants remain in Git history.
    sequence zero), containing ASCII naivefox, one LF and the lowercase
    64-character snapshot digest. The client validates the complete response
    and matching digest before OPEN. The server rejects proxy frames until
-   that first response completes. There is no version negotiation,
+   that first logical GET is committed. There is no version negotiation,
    compatibility alias or separate transport secret.
 
 The [site contract](SITE.md) specifies supported markup, URL and MIME rules,
@@ -43,7 +44,8 @@ unsigned 64-bit big-endian byte length. The identity detects mixed snapshots;
 it is consistency metadata carried only after authentication. Reload mismatch
 fails before OPEN without replay.
 
-AUTH is accepted once per session and compared in constant time. Anonymous
+AUTH is applied once per session and compared in constant time. An identical
+startup HTTP retry returns the committed result without applying AUTH again. Anonymous
 carrier and WebSocket requests, including empty NFOX cells, malformed uploads
 and invalid credentials, receive normal site fallback. They do not advance
 cell or startup sequences. No NFOX response or WebSocket upgrade is available
@@ -56,8 +58,8 @@ protects the complete body, including credentials and payload. Filler comes from
 All integer fields are unsigned big-endian. A direction has its own cell
 sequence, starting at zero and increasing by one for each complete cell,
 including empty cells. HTTP 204 upload acknowledgements contain no cell and do
-not advance the downstream sequence. A failed HTTP request is not retried with
-the same sequence; abort the session because delivery may already have occurred.
+not advance the downstream sequence. Startup HTTP retries are idempotent as
+specified below. Sustained H3 uploads and WebSocket cells are not replayable.
 
 | Cell offset | Width | Meaning |
 | --- | ---: | --- |
@@ -123,7 +125,8 @@ without a bound. The server defaults to 128 sessions (`max_sessions` is
 configurable). At capacity, new visitors replace the oldest unauthenticated
 session; authenticated sessions are never evicted. Sessions expire after two
 minutes without traffic. Startup requests and WebSocket messages refresh this
-timer, so active sessions have no fixed lifetime limit.
+timer, so sustained sessions have no fixed lifetime limit. Startup has a
+separate two-minute deadline from the first committed AUTH.
 
 The round-robin scheduler retains only active stream IDs. RESET and completed
 half-closes retire entries immediately; repeated short connections cannot grow
@@ -141,7 +144,7 @@ Only current `naivefox` is supported. Public resources carry no
 transport declaration. The first POST authenticates and the first GET confirms
 the contract and snapshot; target opening starts with the second POST. Root and all HTML-selected resources complete before the twenty ordered
 POST/GET pairs. Each POST to `/api/sync` is exactly 4096 bytes; each GET uses
-the next fixed response slot:
+an explicit ?seq=N query (N is the round, 0 through 19) and the next fixed response slot:
 
 - four 8192-byte `/api/events/brief` responses;
 - two 32768-byte `/api/events/state` responses;
@@ -149,8 +152,24 @@ the next fixed response slot:
 - two final 8192-byte `/api/events/brief` responses.
 
 Useful frames displace fresh cryptographic filler after the first pair. Complete HTTP status,
-body capacity, encoding, cell sequence and frame bounds are mandatory.
-Startup HTTP endpoints retire after the forty requests complete.
+actual body capacity, encoding, cell sequence and frame bounds are mandatory.
+Content-Length is optional; when present it must match. Successful HTTP EOF,
+streamed body hashes, MIME checks and the authenticated snapshot remain required.
+Startup counts forty logical operations, independent of HTTP attempts or write
+completion. Identical concurrent or later duplicates return the original status
+and bytes. POST identity is its sequence plus SHA-256 of the complete body;
+different content with the same sequence is rejected. GET identity is its
+canonical path and single seq query. A saved GET is never rebuilt from the mux.
+
+The startup journal holds at most 880 KiB of bodies per session and shares a
+64 MiB process-wide body quota. Quota exhaustion returns 503 before consuming
+the GET operation. The journal expires two minutes after AUTH and is cleared
+when entering the sustained carrier or closing the session. In-flight writers
+retain their body quota until returning and have a 30-second write deadline. Expired or retired
+operations cannot execute again. Physical request counters include attempts;
+useful-byte, sequence and startup counters count each logical operation once.
+This handles an intermediary retry after a lost response, not stream resume.
+The native client does not add an automatic application retry loop.
 
 After all forty carrier requests complete successfully, strict H2 opens
 /api/realtime with the sole WebSocket subprotocol naivefox. The endpoint requires

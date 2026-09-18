@@ -36,8 +36,8 @@ func (t *Transport) h3Stream(w http.ResponseWriter, r *http.Request, next caddyh
 		return t.decline(w, r, next)
 	}
 	ready := s.h3 && r.Method == http.MethodGet && r.ProtoMajor == 3 && r.TLS != nil &&
-		!s.realtime && !s.startupInvalid && s.startupSteps == 40 &&
-		s.up >= 20 && s.down >= 20 && s.httpActive == 0
+		!s.realtime && !s.startupInvalid && time.Now().Before(s.startupDeadline) && s.startupSteps == 40 &&
+		s.up >= 20 && s.down >= 20
 	select {
 	case <-s.peer.Done():
 		ready = false
@@ -50,6 +50,7 @@ func (t *Transport) h3Stream(w http.ResponseWriter, r *http.Request, next caddyh
 	}
 	ctx, cancel := context.WithCancel(r.Context())
 	s.realtime, s.h3 = true, true
+	s.clearStartupLocked()
 	s.realtimeConn = cancelCloser{cancel}
 	s.pendingUploads = make(map[uint32]*pendingUpload)
 	s.wsStartupUp, s.wsStartupDown = s.up, s.down
@@ -63,7 +64,7 @@ func (t *Transport) h3Stream(w http.ResponseWriter, r *http.Request, next caddyh
 	t.mu.Unlock()
 	defer func() { t.mu.Lock(); t.stats.H3Closed++; t.mu.Unlock() }()
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Cache-Control", responseCacheControl(r, false))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	controller := http.NewResponseController(w)
@@ -128,7 +129,7 @@ func (t *Transport) h3Upload(w http.ResponseWriter, r *http.Request, next caddyh
 		t.reject(w)
 		return nil
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Cache-Control", responseCacheControl(r, false))
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
