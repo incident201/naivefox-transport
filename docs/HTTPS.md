@@ -84,6 +84,11 @@ WSS and QUIC startup keep their twenty ordered pairs.
   at most 64 KiB of ciphertext. HTTP chunks are arbitrary. A new signed
   generation replaces the previous download.
 
+Interrupted or timed-out finite POST body reads return HTTP 503. No partial
+body is accepted and no cursor advances, so the client retries the exact signed
+operation. Authentication or MAC failures remain fatal; a read failure is not
+an authentication rejection.
+
 Inside TLS, a four-byte length precedes each unchanged NFOX cell. Shared
 OPEN/DATA/CREDIT/FIN/RESET handling multiplexes at most 32 target streams.
 The packet adapter uses 1-MiB per-stream credit, replenished after local delivery.

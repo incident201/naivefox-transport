@@ -150,6 +150,16 @@ func packetReply(w http.ResponseWriter, r *http.Request, status int, body []byte
 	}
 	return err
 }
+
+var errPacketBodyRead = errors.New("packet body read")
+
+func packetBodyStatus(err error, invalid int) int {
+	if errors.Is(err, errPacketBodyRead) {
+		return http.StatusServiceUnavailable
+	}
+	return invalid
+}
+
 func packetBody(w http.ResponseWriter, r *http.Request, limit int) ([]byte, error) {
 	if r.ContentLength == 0 || r.ContentLength > int64(limit) ||
 		r.Header.Get("Content-Type") != "application/octet-stream" ||
@@ -162,11 +172,17 @@ func packetBody(w http.ResponseWriter, r *http.Request, limit int) ([]byte, erro
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	r.Body.Close()
-	if err != nil || len(body) == 0 || len(body) > limit ||
+	if err != nil {
+		return nil, errors.Join(errPacketBodyRead, err)
+	}
+	if err := r.Context().Err(); err != nil {
+		return nil, errors.Join(errPacketBodyRead, err)
+	}
+	if len(body) == 0 || len(body) > limit ||
 		(r.ContentLength >= 0 && int64(len(body)) != r.ContentLength) {
 		return nil, errors.New("packet body length")
 	}
-	return body, r.Context().Err()
+	return body, nil
 }
 
 func (t *Transport) servePacket(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
@@ -242,7 +258,7 @@ func (t *Transport) beginPacket(w http.ResponseWriter, r *http.Request) error {
 	t.expirePackets(time.Now())
 	body, err := packetBody(w, r, packetSetupLimit)
 	if err != nil || len(body) <= 32 {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(packetBodyStatus(err, http.StatusBadRequest))
 		return nil
 	}
 	var nonce [32]byte
@@ -401,7 +417,7 @@ func (t *Transport) authenticatePacket(w http.ResponseWriter, r *http.Request, p
 	cursor, numberErr := packetNumber(r.Header.Get("NaiveFox-Cursor"))
 	tag, tagErr := hex.DecodeString(r.Header.Get("NaiveFox-MAC"))
 	if err != nil || numberErr != nil || tagErr != nil || len(tag) != 32 {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(packetBodyStatus(err, http.StatusBadRequest))
 		return nil
 	}
 	hash := sha256.Sum256(body)
@@ -577,7 +593,7 @@ func (t *Transport) uploadPacket(w http.ResponseWriter, r *http.Request, p *pack
 	cursor, numberErr := packetNumber(r.Header.Get("NaiveFox-Cursor"))
 	tag, tagErr := hex.DecodeString(r.Header.Get("NaiveFox-MAC"))
 	if err != nil || numberErr != nil || tagErr != nil || !packet.Verify(secret, "upload", p.id, sequence, cursor, body, tag) {
-		w.WriteHeader(http.StatusForbidden)
+		w.WriteHeader(packetBodyStatus(err, http.StatusForbidden))
 		return nil
 	}
 	if err := p.raw.Ack(cursor); err != nil {
