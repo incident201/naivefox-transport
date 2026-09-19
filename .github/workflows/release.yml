@@ -85,7 +85,7 @@ jobs:
           binary = pathlib.Path('dist/caddy-linux-amd64')
           template = pathlib.Path('dist/naivefox-application-template.tar.gz')
           build_info = subprocess.check_output(['go', 'version', '-m', str(binary)], text=True).splitlines()
-          assert not any('forwardproxy' in line for line in build_info), 'classic forwardproxy must not be linked'
+          assert not any('forwardproxy' in line for line in build_info), 'unexpected forward-proxy dependency'
           data = {
               'source_repository': os.environ['GITHUB_REPOSITORY'],
               'source_commit': os.environ['SOURCE_SHA'],
@@ -138,7 +138,7 @@ jobs:
           cat > release-notes.md <<EOF
           Caddy 2.11.2 for Linux x86_64 with the single current NaiveFox transport.
 
-          Configure basic_auth and destination policy directly inside naivefox_transport. Client and server must be updated together; classic NaiveProxy and old wire versions are not supported.
+          Configure basic_auth and destination policy directly inside naivefox_transport. Client and server must be updated together; only the current matching pair is supported.
 
           Set application_root to one absolute directory containing the complete public site. The server derives startup resources from index.html and serves their actual bytes from an immutable memory snapshot. There are no compulsory CSS/JS/image filenames, resource counts, manifest files or padding sizes. Other files remain available from disk on GET/HEAD.
 
@@ -146,7 +146,9 @@ jobs:
 
           See the [site requirements and size recommendations](https://github.com/$GH_REPO/blob/$SOURCE_SHA/docs/SITE.md) and [complete Caddyfile](https://github.com/$GH_REPO/blob/$SOURCE_SHA/README.md#build-and-configure).
 
-          H2 uses native WSS/TCP after the site and twenty-pair startup. H3 remains on QUIC with a persistent HTTP/3 GET and bounded POST pipeline. Public responses contain no transport metadata. Authentication and the shared site identity are verified before OPEN.
+          The default https:// transport uses finite H2 POSTs, a resumable GET and pinned inner TLS. Configure packet_tls and put its SPKI fingerprint in the client username~PIN field. The pin is mandatory for direct and CDN endpoints. wss:// explicitly selects WebSocket and ignores an optional PIN suffix. quic:// stays on native HTTP/3. Authentication and the shared site identity are verified before OPEN.
+
+          See the [HTTPS transport configuration](https://github.com/$GH_REPO/blob/$SOURCE_SHA/docs/HTTPS.md) and [CDN deployment requirements](https://github.com/$GH_REPO/blob/$SOURCE_SHA/docs/CDN.md).
 
           Source commit: $SOURCE_SHA. Go 1.25.12, xcaddy 0.4.6; the exact module list and binary checksum are recorded in build-info.json.
 

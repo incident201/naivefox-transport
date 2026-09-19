@@ -8,7 +8,7 @@ import (
 )
 
 const ExporterLabel = "EXPORTER-NaiveFox-packet"
-const ExporterContext = "naivefox/cdn"
+const ExporterContext = "naivefox/https"
 
 func Secret(state tls.ConnectionState) ([]byte, error) {
 	return state.ExportKeyingMaterial(ExporterLabel, []byte(ExporterContext), 32)

@@ -202,7 +202,7 @@ func (c *packetTestClient) bootstrap() {
 	c.up = 2
 	frames := c.take()
 	if len(frames) != 1 || frames[0].Kind != cell.Hello ||
-		string(frames[0].Body) != "naivefox\n"+c.module.application.identity+"\ncdn\n"+c.id {
+		string(frames[0].Body) != "naivefox\n"+c.module.application.identity+"\nhttps\n"+c.id {
 		c.t.Fatal("encrypted carrier confirmation")
 	}
 	if bytes.Contains(begin, []byte(testAuthorization)) || bytes.Contains(auth, []byte(testAuthorization)) {

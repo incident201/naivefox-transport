@@ -541,7 +541,7 @@ func (t *Transport) runPacket(p *packetSession) {
 	state := &session{authed: true, packet: true, realtime: true, up: 1, down: 1, wake: make(chan struct{}, 1), last: time.Now()}
 	state.peer = mux.NewHTTP3(t.dialTransportDestination)
 	state.realtimeConn = cancelCloser{p.cancel}
-	hello, err := cell.Encode(0, 512, []cell.Frame{{Kind: cell.Hello, Body: []byte(transportIdentity + "\n" + t.application.identity + "\ncdn\n" + p.id)}})
+	hello, err := cell.Encode(0, 512, []cell.Frame{{Kind: cell.Hello, Body: []byte(transportIdentity + "\n" + t.application.identity + "\nhttps\n" + p.id)}})
 	if err != nil {
 		state.close()
 		return

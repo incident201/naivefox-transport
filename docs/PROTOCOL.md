@@ -3,9 +3,11 @@
 This document describes the current NaiveFox contract shared by the
 Caddy module and the native lean NaiveFox client. Only its current implementation
 is supported. Upgrade both peers together; there is no negotiation or compatibility
-with earlier releases. Historical variants remain in Git history.
+with earlier releases. Historical variants remain in Git history. The default HTTPS packet delivery
+is specified in [HTTPS.md](HTTPS.md); WSS/QUIC startup is detailed below. All
+three selections share the current cell and mux contract.
 
-## Direct-carrier origin, session and authentication
+## WSS/QUIC origin, session and authentication
 
 1. Connect to the configured HTTPS origin with ordinary certificate validation,
    using native strict HTTP/2 or HTTP/3. H2 later uses H1 WSS/TCP; H3 remains HTTP/3 throughout.
@@ -49,11 +51,11 @@ startup HTTP retry returns the committed result without applying AUTH again. Ano
 carrier and WebSocket requests, including empty NFOX cells, malformed uploads
 and invalid credentials, receive normal site fallback. They do not advance
 cell or startup sequences. No NFOX response or WebSocket upgrade is available
-before successful authentication. Direct authentication is not a separate HMAC or encryption scheme: outer TLS
+before successful authentication. WSS/QUIC authentication is not a separate HMAC or encryption scheme: outer TLS
 protects the complete body, including credentials and payload. Filler comes from
-`crypto/rand`; the direct cell layer has no additional AEAD or bespoke key exchange.
-The experimental packet adapter's inner TLS and authenticated replay rules are specified
-separately in [CDN.md](CDN.md).
+`crypto/rand`; their cell layer has no additional AEAD or bespoke key exchange.
+The default HTTPS packet adapter's inner TLS and authenticated replay rules are specified
+separately in [HTTPS.md](HTTPS.md).
 
 ## Cells and frames
 
@@ -105,8 +107,8 @@ or SOCKS5 upstream owns destination DNS and policy. The default dial timeout is
 30 seconds. Failed or denied dials produce RESET. A native client must wait for OPENED before
 reporting local proxy success.
 
-Both peers start each stream with 524288 bytes (direct H2) or 1048576 bytes
-(H3 and experimental packet delivery) of send credit and receive budget. DATA decrements those counters. CREDIT replenishes send credit only
+Both peers start each stream with 524288 bytes (WSS) or 1048576 bytes
+(QUIC and HTTPS packet delivery) of send credit and receive budget. DATA decrements those counters. CREDIT replenishes send credit only
 after bytes were written to the receiving local socket, and cannot exceed the
 initial window. FIN is a half-close: remaining data in the opposite direction
 continues. RESET aborts the stream. Stream byte offsets wrap modulo 2^32;
@@ -118,7 +120,7 @@ At most 32 streams are active per session. The server has 16 queued outbound
 reads of at most 16 KiB per stream. Inbound DATA frames coalesce into chunks of
 at most 16 KiB under the byte-credit bound, with one ordered FIN slot and a
 single wake signal. Tiny wire frames therefore do not exhaust an unrelated
-frame-count quota. The fixed window permits at most 33 (H2) or 65 (H3) allocated inbound
+frame-count quota. The fixed window permits at most 33 (WSS) or 65 (HTTPS/QUIC) allocated inbound
 data chunks including the in-flight writer chunk; payload bytes across the
 queue and writer never exceed the corresponding stream window. Credit alone is
 not a total memory bound; prefetched/in-flight cells and frame allocations are
@@ -204,8 +206,8 @@ close the carrier. Caddy/Gorilla own HTTP, TLS and WebSocket framing.
 | Direction | No payload | Small payload | Medium grant | Large grant |
 | --- | ---: | ---: | ---: | ---: |
 | Client to server | 512 B; OPEN uses 4096 B | 4096 B | 16384 B at 8192 B ready | 131072 B at 65536 B ready |
-| Server to client, H2 | 512 B | 8192 B | 65536 B at 32768 B ready | 262144 B at 131072 B ready |
-| Server to client, H3 | 512 B | 8192 B | 65536 B at 32768 B ready | 65536 B |
+| Server to client, WSS | 512 B | 8192 B | 65536 B at 32768 B ready | 262144 B at 131072 B ready |
+| Server to client, QUIC | 512 B | 8192 B | 65536 B at 32768 B ready | 65536 B |
 
 Only currently sendable bytes within stream credit count. A partial payload
 coalesces for 2 ms, then capacity is checked again. The scheduler accounts for framing when choosing capacity; the bounded
@@ -225,7 +227,7 @@ CREDIT still follows actual local socket delivery. Future, decreasing,
 malformed or HTTP-carried ACKs fail closed. Clients never send ACK.
 AUTH is permitted only in startup, not after the transition.
 
-Each carrier multiplexes up to 32 streams with 512-KiB (H2) or 1-MiB (H3) per-stream credit.
+Each carrier multiplexes up to 32 streams with 512-KiB (WSS) or 1-MiB (HTTPS/QUIC) per-stream credit.
 The client upload buffer is at most 256 KiB per stream. Byte offsets wrap
 modulo 2^32; stream byte counts have no fixed 4-GiB ceiling. Native WS ingress
 is capped at 32 callbacks and 2 MiB, and its PONG queue at 32.
@@ -242,7 +244,8 @@ H3 cells are capped at 64 KiB to limit complete-message delivery latency.
 There is one current NaiveFox transport. Client and server update together;
 there is no compatibility profile, wire-version negotiation or automatic
 migration fallback. The client URI explicitly selects its delivery adapter.
-Strict H2 uses WSS after startup; strict H3 uses HTTP/3 GET/POST throughout.
+Default HTTPS uses pinned inner TLS and H2 POST/GET delivery. WSS uses
+WebSocket after H2 startup; QUIC uses HTTP/3 GET/POST throughout.
 The listener serves one complete public application_root containing index.html,
 its selected resources and any additional site resources. See the Caddyfile
 example in [README.md](../README.md).
@@ -256,10 +259,10 @@ Counters never include credentials, cookie values or payload bytes.
 
 ## Packet delivery over H2
 
-The developing cdn:// adapter shares cells and mux semantics with the direct
-adapters. It wraps NFOX cells in an authenticated inner TLS 1.3 stream and
+The default https:// adapter shares cells and mux semantics with WSS and QUIC. It wraps NFOX cells in an authenticated inner TLS 1.3 stream and
 delivers ciphertext through finite POSTs and resumable GET records. It has
-separate startup and HTTP replay semantics; direct H2/WSS and H3 behavior above
-is unchanged. Its pinned identity, exporter MACs, routes, exact queue limits
-and failure boundaries are specified in [CDN.md](CDN.md). No provider
+separate startup and HTTP replay semantics from the WSS and QUIC deliveries
+described above. Its pinned identity, exporter MACs, routes, exact queue limits
+and failure boundaries are specified in [HTTPS.md](HTTPS.md). CDN deployment
+requirements are separate in [CDN.md](CDN.md). No provider
 compatibility or passive acceptance is implied by local protocol tests.

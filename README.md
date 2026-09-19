@@ -7,9 +7,11 @@ fallbacks or old-client compatibility. CONNECT is not prohibited
 by the architecture; it is simply not needed for this carrier.
 
 Firefox clients use native Necko/NSS/Neqo. The server uses Caddy's HTTP/TLS/QUIC
-stack. Strict H2 startup is followed by native WSS/TCP. Strict H3 continues over
-QUIC using one persistent downstream GET and at most eight concurrent finite
-upstream POSTs. H3 never switches to WebSocket/TCP.
+stack. https:// is the default: finite HTTP/2 POSTs, a resumable streaming GET
+and pinned inner TLS, directly or through a compatible CDN. wss:// explicitly
+selects WebSocket after H2 startup. quic:// keeps startup and sustained delivery
+on HTTP/3, with one downstream GET and at most eight finite upload POSTs.
+There is no automatic fallback.
 
 ## Build and configure
 
@@ -27,6 +29,7 @@ proxy.example {
         naivefox_transport {
             application_root /srv/naivefox-site
             basic_auth username password
+            packet_tls /etc/naivefox/inner.crt /etc/naivefox/inner.key
         }
     }
 }
@@ -51,7 +54,7 @@ Supported handler options:
 | max_sessions N | Positive session bound; default 128 |
 | stats_path PATH | Private aggregate statistics written on cleanup |
 | diagnostics | Enable authenticated /__lab/stats for controlled diagnostics |
-| packet_tls CERT KEY | Dedicated inner-TLS identity for the experimental cdn:// carrier |
+| packet_tls CERT KEY | Inner certificate/key required by the default https:// packet delivery |
 
 Explicit access rules precede the default private-network exclusions and final
 allow rule. Domain matching is case insensitive and accepts a terminal DNS dot.
@@ -74,17 +77,22 @@ out of order but finish successfully only after in-order application. The
 server bounds active bodies and retained sequences. A failed or canceled
 request ends the carrier without application replay.
 
-For direct delivery, only one persistent carrier may attach to an authenticated
+For WSS and QUIC delivery, only one persistent carrier may attach to an authenticated
 session after its twenty-pair startup. Unauthenticated requests fall through to ordinary site
 handling. TLS protects credentials and payload; unused cell suffixes use fresh
 cryptographic randomness.
 
-Direct H2/H3 is the supported deployment. The **experimental cdn://** packet
-adapter is opt-in through packet_tls and is not validated for production use.
-It uses finite H2 POSTs, resumable streaming GET and inner TLS to a pinned origin.
-Local reverse-proxy and native-client tests do not establish provider
-compatibility; no real CDN provider has completed end-to-end acceptance.
-See [docs/CDN.md](docs/CDN.md).
+The default client URI is https://username~PIN:password@proxy.example:443.
+PIN is the 64-hex SHA-256 SPKI fingerprint of the dedicated inner certificate.
+It is mandatory for HTTPS even on a direct connection. On wss:// the client
+strips and ignores the optional final username tilde suffix; quic:// retains
+ordinary username semantics. The server basic_auth username never includes the
+HTTPS/WSS PIN suffix.
+
+Create the inner identity and distribute its pin as described in
+[docs/HTTPS.md](docs/HTTPS.md). packet_tls may be omitted only when serving WSS
+or QUIC exclusively. CDN production acceptance is a separate deployment gate;
+see [docs/CDN.md](docs/CDN.md).
 
 See [docs/PROTOCOL.md](docs/PROTOCOL.md) for wire details and
 [docs/SITE.md](docs/SITE.md) for the public site. Tests cover authentication,
