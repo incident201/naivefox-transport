@@ -162,7 +162,7 @@ func (t *Transport) realtime(w http.ResponseWriter, r *http.Request, next caddyh
 }
 
 func (t *Transport) receiveRealtime(s *session, body []byte) error {
-	if len(body) != 512 && len(body) != 4096 && len(body) != 16384 && len(body) != 131072 {
+	if len(body) != 512 && len(body) != 4096 && len(body) != 16384 && len(body) != 131072 && !(s.packet && len(body) == 8192) {
 		return errors.New("realtime capacity")
 	}
 	sequence, frames, filler, err := cell.Decode(body)
@@ -202,7 +202,9 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	default:
 	}
 	t.mu.Lock()
-	if s.h3 {
+	if s.packet {
+		t.stats.PacketUploads++
+	} else if s.h3 {
 		t.stats.H3Uploads++
 	} else {
 		t.stats.WSMessagesIn++
@@ -212,7 +214,7 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 	t.stats.UploadBytes += uint64(len(body))
 	t.stats.UploadFiller += uint64(filler)
 	t.stats.UploadUseful += useful
-	if !s.h3 {
+	if !s.h3 && !s.packet {
 		t.stats.WSUploadBytes += uint64(len(body))
 		t.stats.WSUploadFiller += uint64(filler)
 		t.stats.WSUploadUseful += useful
@@ -223,7 +225,7 @@ func (t *Transport) receiveRealtime(s *session, body []byte) error {
 }
 
 func (s *session) maxDownCell() int {
-	if s.h3 {
+	if s.h3 || s.packet {
 		return 65536
 	}
 	return cell.MaxCell
@@ -273,7 +275,7 @@ func (t *Transport) writeRealtime(ctx context.Context, conn *websocket.Conn, s *
 
 func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval time.Duration, write func([]byte) error) {
 	firstDelay := idleInterval
-	if s.h3 {
+	if s.h3 || s.packet {
 		firstDelay = 0
 	}
 	heartbeat := time.NewTimer(firstDelay)
@@ -296,6 +298,10 @@ func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval tim
 				continue
 			case <-s.wake:
 				continue
+			}
+		} else if s.packet {
+			if !waitPacketBatch(ctx, s) {
+				return
 			}
 		} else if pressure.Bytes > 0 && s.readyDownCapacity(pressure) != 512 && realtimeFramedBytes(pressure) < int64(min(realtimeCoalescingDownCapacity(pressure.Bytes), s.maxDownCell())) {
 			if !waitRealtimeCoalesce(ctx, s, 2*time.Millisecond) {
@@ -361,7 +367,9 @@ func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval tim
 		if idleHeartbeat && len(frames) == 0 {
 			t.stats.IdleHeartbeats++
 		}
-		if s.h3 {
+		if s.packet {
+			t.stats.PacketDownloads++
+		} else if s.h3 {
 			t.stats.H3Downloads++
 		} else {
 			t.stats.WSMessagesOut++
@@ -371,7 +379,7 @@ func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval tim
 		t.stats.DownloadBytes += uint64(len(body))
 		t.stats.DownloadFiller += uint64(len(body) - used)
 		t.stats.DownloadUseful += useful
-		if !s.h3 {
+		if !s.h3 && !s.packet {
 			t.stats.WSDownloadBytes += uint64(len(body))
 			t.stats.WSDownloadFiller += uint64(len(body) - used)
 			t.stats.WSDownloadUseful += useful

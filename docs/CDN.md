@@ -1,84 +1,137 @@
-# CDN deployment contract
+# CDN packet delivery (experimental)
 
-**Status: work in progress; not validated for production use. CDN integration
-is currently deferred.** Direct connections using H2 or H3 are the supported
-deployment. Local TLS reverse-proxy checks do not establish compatibility with
-a real CDN; complete end-to-end provider testing has not been performed and no
-provider is supported yet.
+**Experimental, opt-in; not validated for production use.** No real CDN provider
+has completed acceptance. Local reverse-proxy and native-client checks do not
+establish provider compatibility.
 
-The proposed first integration uses H2 startup followed by binary WSS over
-HTTP/1.1, a dedicated public hostname and one HTTPS origin process. Client and
-server must be updated together. The requirements below describe future
-validation, not a supported deployment.
+## Configuration and identity
 
-| Route | Required edge behavior |
-| --- | --- |
-| GET / | Bypass cache, forward Set-Cookie, preserve the exact representation |
-| Selected site resources | Bypass cache for initial deployment; preserve MIME and bytes |
-| POST /api/sync | Forward body and cookies; do not convert the method |
-| GET /api/events/*, /media/chunk/* | Bypass cache; preserve the seq query and cookies |
-| /api/realtime | Binary WebSocket passthrough; preserve Origin and Sec-WebSocket-* |
+One current NaiveFox application protocol has explicit delivery adapters.
+The server retains direct H2/WSS and direct H3, and enables packet delivery when
+a dedicated inner-TLS certificate/key is configured:
 
-Use HTTPS to the origin with certificate verification and correct SNI. Preserve
-the public Host. Configure Caddy trusted_proxies, trusted_proxies_strict and
-client_ip_headers for the actual proxy chain; do not trust arbitrary forwarded
-headers or the whole Internet. Health checks should use HEAD / rather than
-creating sessions with GET /. Disable response transformations and browser-only
-challenges using the provider's supported policy settings.
+~~~caddyfile
+cdn.example {
+    route {
+        naivefox_transport {
+            application_root /srv/naivefox-site
+            basic_auth username password
+            packet_tls /etc/naivefox/inner.crt /etc/naivefox/inner.key
+        }
+    }
+}
+~~~
 
-A CDN terminates TLS and is trusted with the NaiveFox protocol and authentication.
-Application HTTPS inside a proxied connection retains its own encryption.
-An outer carrier failure terminates its streams; new sessions can reconnect.
-There is no transparent stream resume, multi-origin socket migration, or
-supported H3-through-CDN deployment in this integration stage.
+Keep the inner private key on the origin, outside the CDN and public site.
+It must be different from a key entrusted to an edge. For example:
 
-Startup GET uses ?seq=N (0 through 19); POST is identified by its cell sequence
-and complete body. A repeated operation returns its original result, including
-identical randomized GET padding, and never delivers its input twice.
-A conflicting POST body or invalid ordering is rejected. The journal retains
-at most 880 KiB of response bodies per session, uses a process-wide 64 MiB
-body budget, expires two minutes after AUTH, and is cleared at sustained-carrier
-entry or session close. Capacity exhaustion returns 503 without consuming
-the operation. Expired/retired startup operations cannot execute again.
+~~~sh
+umask 077
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes   -days 3650 -keyout inner.key -out inner.crt -subj "/CN=NaiveFox Origin"
+openssl x509 -in inner.crt -pubkey -noout |
+  openssl pkey -pubin -outform DER |
+  openssl dgst -sha256
+~~~
 
-Provider readiness requires a local TLS reverse-proxy fixture, direct H2/H3
-regressions, runtime checks on Linux/Windows/Android, and short performance
-screens before testing public staging. Actual provider cache, timeout, origin
-routing and security rules must be verified before claiming compatibility.
+Distribute the printed 64-hex SPKI hash directly with the credentials. The
+existing client proxy field becomes
+cdn://username~PIN:password@cdn.example:443. The client extracts the final
+tilde suffix from the decoded username; it sends the original username inside
+inner TLS. No new client JSON field is required. Android wrappers must pass
+through cdn:// and the username suffix. Pin/key rotation requires coordinated
+client configuration updates. The inner certificate must remain time-valid.
 
-## Experimental Cloudflare configuration
+Outer H2/HTTPS remains native Necko/NSS with normal edge-certificate validation.
+Inner TLS 1.3 is NSS on the client and Go crypto/tls on the origin, with pinned
+SPKI authentication, forward-secret handshakes, no tickets and no early data.
+The inner handshake completes before AUTH. TLS exporter material authenticates
+operations, counters, exact ciphertext and responses. It is never sent in the
+clear. The visible opaque routing ID and ordinary HTTP cookies are not
+authentication. Packet sessions are independent of source and forwarded IPs.
 
-This unvalidated example is retained for future development. It does not
-establish CDN availability from any network or compatibility with NaiveFox.
+The CDN can see request names, lengths and timing or deny delivery. It cannot
+read credentials, destination OPEN frames or payload, or forge an accepted
+frame/acknowledgement. The direct adapters protect their own outer
+connection with TLS; selecting https:// through a TLS-terminating intermediary
+does not add this packet adapter's inner protection.
 
-Use a dedicated proxied DNS hostname with WebSockets enabled and Full (strict)
-TLS. The origin certificate must be valid for that name and trusted by
-Cloudflare (a public certificate or Cloudflare Origin CA). Keep one origin
-process and the public Host. Use a normal proxied DNS route for this first test;
-Workers, tunnels, load-balancer failover and H3 through the CDN are separate
-integration work. See [WebSockets](https://developers.cloudflare.com/network/websockets/)
-and [Full (strict)](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/).
+## Delivery contract
 
-Set a Cache Rule for the complete test hostname to bypass cache. Disable
-response-altering features for it, including Rocket Loader, HTML/script
-injection and image transformations. The module sends no-transform to configured trusted proxies and identity
-bodies; do not add an origin encode handler. Configure a noninteractive
-security policy for the test hostname so legitimate native requests do not
-receive browser challenges. Keep these changes scoped to the dedicated test
-hostname. See [Cache Rules](https://developers.cloudflare.com/cache/how-to/cache-rules/settings/)
-and [compression/transform behavior](https://developers.cloudflare.com/speed/optimization/content/compression/).
+Public HTML and selected resources are still consumed and hashed. Encrypted
+HELLO binds the exact snapshot, cdn selection and session ID before OPEN.
+Packet startup uses two finite POST exchanges for inner TLS and AUTH/HELLO.
+Direct startup keeps its twenty ordered pairs.
 
-Configure Caddy trusted_proxies with current Cloudflare egress ranges, enable
-trusted_proxies_strict and set client_ip_headers to CF-Connecting-IP.
-Do not include arbitrary intermediate proxies. The first test uses no Worker
-subrequests and no Pseudo IPv4 header overwrite. Sessions remain bound to the
-verified client address; changing networks requires a fresh session.
-See [Cloudflare headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/)
-and the official [IPv4](https://www.cloudflare.com/ips-v4) /
-[IPv6](https://www.cloudflare.com/ips-v6) lists.
+- POST /api/packet: a 32-byte client nonce and TLS ClientHello. The finite
+  response carries the origin-issued ID and server flight. Exact retries
+  return the retained response; a conflicting nonce/body is rejected.
+- POST /api/packet/{id}/auth: TLS Finished and the framed AUTH cell. The
+  exporter MAC binds the ID, acknowledged server-flight cursor and body.
+  The finite response includes an authenticated cursor and encrypted HELLO.
+- POST /api/packet/{id}/upload/{sequence}: one completed ciphertext block,
+  at most 64 KiB, with known Content-Length. NaiveFox-Cursor and NaiveFox-MAC
+  authenticate the request. The response acknowledges the contiguous
+  accepted prefix with an authenticated counter; HTTP status alone is not ACK.
+- GET /api/packet/{id}/download?generation=N&cursor=N: a signed streaming GET.
+  Each item contains an eight-byte sequence, four-byte length, 32-byte MAC and
+  at most 64 KiB of ciphertext. HTTP chunks are arbitrary. A new signed
+  generation replaces the previous download.
 
-Use HEAD / for health probes. Check public DNS and remove any client MAP to
-the origin. Record the tested hostname's cache/security/TLS rules and verify
-Cf-Ray at the client and origin. The client failure log records a bounded,
-sanitized Cf-Ray identifier when present, plus phase/status/protocol; it does
-not log authentication, cookie values, destination names or payload.
+Inside TLS, a four-byte length precedes each unchanged NFOX cell. Shared
+OPEN/DATA/CREDIT/FIN/RESET handling multiplexes at most 32 target streams.
+The packet adapter uses 1-MiB per-stream credit, replenished after local delivery.
+
+Uploads have eight slots and a 512-KiB byte bound. Original ciphertext is
+retained for retries; out-of-order arrival never duplicates a TLS byte.
+Downstream replay holds at most 2 MiB and 128 blocks per session and applies
+backpressure when full. Only an authenticated cursor releases retained data.
+If a reconnect needs data older than the retained floor, the session ends.
+It never silently recreates a target connection or skips bytes.
+
+There are at most 32 packet sessions, sixteen provisional sessions, 64 aggregate
+HTTP handlers and twelve active handlers per packet session. max_sessions can
+further restrict admission. Setup has a 30-second deadline, client retries and
+download recovery a 30-second bound, and sessions expire after 90 seconds
+without fresh authenticated client progress. Old request replays cannot renew
+that lease. The downlink emits an encrypted heartbeat every five seconds.
+
+## Edge and origin requirements
+
+The client-facing edge must support H2 and forward finite binary POSTs and
+streaming GET responses. Origin HTTP/1.1 or H2 is sufficient; neither WebSocket
+nor a streaming request body is required. Use authenticated HTTPS to the origin.
+
+Bypass cache for packet paths, preserve method/query/header/body bytes, and
+disable transformations and interactive browser challenges. Responses include
+no-store, no-transform and X-Accel-Buffering: no, but a provider may not honor
+all hints. A provider that buffers the entire live GET cannot serve this mode.
+
+A session belongs to one origin process. Multi-origin socket migration and
+survival of an origin restart are not implemented; route consistently.
+Source-node changes are allowed and do not require trusting forwarded-IP
+headers for packet authentication. Public site snapshot validation still
+rejects transformed resources.
+
+Verify streaming-prefix delivery, request/body limits, idle/lifetime limits,
+cache rules and routing at the selected provider. Native Linux/Windows/Android
+correctness, direct regressions and short speed/latency/five-window screens
+precede a long comparison campaign. No minimal-source export or release is
+part of this development experiment.
+
+The client always completes each POST with a known body length. An intermediary
+may remove Content-Length or reframe the finite origin request as HTTP/1.1
+chunked. The origin still reads a bounded body to successful EOF before
+accepting it; size and read deadlines reject unfinished or oversized uploads.
+
+Packet upload cell selection accounts for framing and includes an 8-KiB
+capacity, so a 4-KiB application write does not need a second POST merely for
+its headers. The packet downlink batches ready ACK, CREDIT and payload for a
+fixed interval of at most 2 ms; a full cell bypasses that wait. This prevents
+small control writes from consuming the idle TCP congestion window before the
+reply. The cell length and body are written to inner TLS together. Direct
+carrier scheduling remains unchanged.
+
+The configured max_sessions is shared across direct and packet admission.
+The public unauthenticated visitor slot is transferred to packet setup when
+possible. Expiry and module shutdown release reservations; setup after shutdown
+is rejected.

@@ -32,6 +32,10 @@ func (t *Transport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			}
 			seen[name] = true
 			switch name {
+			case "packet_tls":
+				if !d.AllArgs(&t.PacketCertificate, &t.PacketKey) {
+					return d.ArgErr()
+				}
 			case "application_root":
 				if !d.AllArgs(&t.ApplicationRoot) {
 					return d.ArgErr()

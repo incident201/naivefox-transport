@@ -2,7 +2,8 @@
 
 This module is the server for the single current NaiveFox transport. Update
 client and server together. Only the current matching pair is supported;
-there are no alternate transports, wire versions or migration fallbacks. CONNECT is not prohibited
+explicit delivery adapters share the current wire contract without version
+fallbacks or old-client compatibility. CONNECT is not prohibited
 by the architecture; it is simply not needed for this carrier.
 
 Firefox clients use native Necko/NSS/Neqo. The server uses Caddy's HTTP/TLS/QUIC
@@ -50,6 +51,7 @@ Supported handler options:
 | max_sessions N | Positive session bound; default 128 |
 | stats_path PATH | Private aggregate statistics written on cleanup |
 | diagnostics | Enable authenticated /__lab/stats for controlled diagnostics |
+| packet_tls CERT KEY | Dedicated inner-TLS identity for the experimental cdn:// carrier |
 
 Explicit access rules precede the default private-network exclusions and final
 allow rule. Domain matching is case insensitive and accepts a terminal DNS dot.
@@ -57,7 +59,7 @@ A configured upstream owns destination resolution and policy. Unknown options
 and duplicate singleton options are errors. Credentials are never optional.
 
 The JSON handler has application_root, access, max_sessions, stats_path and
-diagnostics fields. Its access object contains credentials (username/password
+diagnostics, packet_certificate and packet_key fields. Its access object contains credentials (username/password
 objects), acl (subjects/allow rules), allowed_ports, dial_timeout and upstream.
 
 ## Bounds and lifecycle
@@ -72,15 +74,17 @@ out of order but finish successfully only after in-order application. The
 server bounds active bodies and retained sequences. A failed or canceled
 request ends the carrier without application replay.
 
-Only one persistent carrier may attach to an authenticated session after its
-twenty-pair startup. Unauthenticated requests fall through to ordinary site
+For direct delivery, only one persistent carrier may attach to an authenticated
+session after its twenty-pair startup. Unauthenticated requests fall through to ordinary site
 handling. TLS protects credentials and payload; unused cell suffixes use fresh
 cryptographic randomness.
 
-Direct H2/H3 is the supported deployment. **CDN support is work in progress
-and is not validated for production use.** Local reverse-proxy tests exist,
-but complete end-to-end testing with a real provider has not been performed.
-CDN integration is currently deferred. See [docs/CDN.md](docs/CDN.md).
+Direct H2/H3 is the supported deployment. The **experimental cdn://** packet
+adapter is opt-in through packet_tls and is not validated for production use.
+It uses finite H2 POSTs, resumable streaming GET and inner TLS to a pinned origin.
+Local reverse-proxy and native-client tests do not establish provider
+compatibility; no real CDN provider has completed end-to-end acceptance.
+See [docs/CDN.md](docs/CDN.md).
 
 See [docs/PROTOCOL.md](docs/PROTOCOL.md) for wire details and
 [docs/SITE.md](docs/SITE.md) for the public site. Tests cover authentication,

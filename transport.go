@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,22 +29,35 @@ import (
 func init() { caddy.RegisterModule(Transport{}) }
 
 type Transport struct {
-	ApplicationRoot string       `json:"application_root,omitempty"`
-	StatsPath       string       `json:"stats_path,omitempty"`
-	Access          AccessConfig `json:"access"`
-	MaxSessions     int          `json:"max_sessions,omitempty"`
-	Diagnostics     bool         `json:"diagnostics,omitempty"`
-	authHashes      [][32]byte
-	policy          *tcpPolicy
-	application     applicationFiles
-	mu              sync.Mutex
-	sessions        map[string]*session
-	stats           counters
-	stop            chan struct{}
-	done            chan struct{}
+	PacketCertificate string `json:"packet_certificate,omitempty"`
+	PacketKey         string `json:"packet_key,omitempty"`
+	packetTLS         *tls.Config
+	packetAdmission   chan struct{}
+	packetCount       int
+	packetMu          sync.Mutex
+	packets           map[string]*packetSession
+	packetNonces      map[[32]byte]*packetSession
+	ApplicationRoot   string       `json:"application_root,omitempty"`
+	StatsPath         string       `json:"stats_path,omitempty"`
+	Access            AccessConfig `json:"access"`
+	MaxSessions       int          `json:"max_sessions,omitempty"`
+	Diagnostics       bool         `json:"diagnostics,omitempty"`
+	authHashes        [][32]byte
+	policy            *tcpPolicy
+	application       applicationFiles
+	mu                sync.Mutex
+	sessions          map[string]*session
+	stats             counters
+	stop              chan struct{}
+	done              chan struct{}
 }
 
 type counters struct {
+	PacketPeaks     [33]uint64 `json:"packet_peaks"`
+	PacketOpened    uint64     `json:"packet_opened"`
+	PacketUploads   uint64     `json:"packet_uploads"`
+	PacketDownloads uint64     `json:"packet_downloads"`
+
 	StartupReplays   uint64            `json:"startup_replays"`
 	H3Opened         uint64            `json:"h3_opened"`
 	H3Closed         uint64            `json:"h3_closed"`
@@ -96,6 +110,7 @@ type session struct {
 	startupBytes    int64
 	h3Active        int
 	h3              bool
+	packet          bool
 	uploadMu        sync.Mutex
 	pendingUploads  map[uint32]*pendingUpload
 	realtime        bool
@@ -137,6 +152,10 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 		application.close()
 		return err
 	}
+	if err := t.provisionPacket(); err != nil {
+		application.close()
+		return err
+	}
 	var retainedBytes uint64
 	for _, asset := range application.assets {
 		retainedBytes += uint64(len(asset.body))
@@ -167,6 +186,7 @@ func (t *Transport) Provision(ctx caddy.Context) error {
 }
 
 func (t *Transport) expire(now time.Time) {
+	t.expirePackets(now)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for id, s := range t.sessions {
@@ -186,6 +206,7 @@ func (t *Transport) Cleanup() (err error) {
 		close(t.stop)
 		<-t.done
 	}
+	t.closePackets()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for id, s := range t.sessions {
@@ -265,7 +286,7 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 	if r.URL.Path != "/" {
 		return nil, errors.New("session")
 	}
-	for len(t.sessions) >= t.MaxSessions {
+	for len(t.sessions)+t.packetCount >= t.MaxSessions {
 		// Anonymous page visits must not reserve every slot for the full TTL.
 		// Evict the oldest unauthenticated session, never an authenticated one.
 		var oldestID string
@@ -298,26 +319,13 @@ func (t *Transport) getSession(w http.ResponseWriter, r *http.Request) (*session
 		newPeer = mux.NewHTTP3
 	}
 	s.peer = newPeer(func(ctx context.Context, target string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(target)
-		if err != nil || host == "" || strings.ContainsAny(host, "\x00\r\n\t /?#@") || port == "" {
-			return nil, errors.New("invalid TCP destination")
-		}
-		for _, digit := range port {
-			if digit < '0' || digit > '9' {
-				return nil, errors.New("invalid TCP destination port")
-			}
-		}
-		number, err := strconv.Atoi(port)
-		if err != nil || number < 1 || number > 65535 {
-			return nil, errors.New("invalid TCP destination port")
-		}
 		s.mu.Lock()
 		authed := s.authed
 		s.mu.Unlock()
 		if !authed {
 			return nil, errors.New("unauthenticated stream")
 		}
-		return t.policy.DialContext(ctx, target)
+		return t.dialTransportDestination(ctx, target)
 	})
 	id := hex.EncodeToString(token)
 	t.sessions[id] = s
@@ -333,6 +341,9 @@ func (t *Transport) reject(w http.ResponseWriter) {
 }
 
 func (t *Transport) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	if r.URL.Path == "/api/packet" || strings.HasPrefix(r.URL.Path, "/api/packet/") {
+		return t.servePacket(w, r, next)
+	}
 	if r.URL.Path == "/api/stream" {
 		return t.h3Stream(w, r, next)
 	}
@@ -453,4 +464,22 @@ func (t *Transport) decline(w http.ResponseWriter, r *http.Request, next caddyht
 	t.stats.Rejected++
 	t.mu.Unlock()
 	return next.ServeHTTP(w, r)
+}
+
+func (t *Transport) dialTransportDestination(ctx context.Context, target string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil || host == "" || strings.ContainsAny(host, "\x00\r\n\t /?#@") || port == "" {
+		return nil, errors.New("invalid TCP destination")
+	}
+	for _, digit := range port {
+		if digit < '0' || digit > '9' {
+			return nil, errors.New("invalid TCP destination port")
+		}
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 {
+		return nil, errors.New("invalid TCP destination port")
+	}
+
+	return t.policy.DialContext(ctx, target)
 }
