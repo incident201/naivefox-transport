@@ -1,5 +1,9 @@
 # NaiveFox transport contract
 
+NaiveFox Transport is a research project created entirely with AI. This covers all
+project-specific code and documentation; upstream dependencies retain their
+original authorship and licenses.
+
 This document describes the current NaiveFox contract shared by the
 Caddy module and the native lean NaiveFox client. Only its current implementation
 is supported. Upgrade both peers together; there is no negotiation or compatibility

@@ -1,5 +1,9 @@
 # NaiveFox public site template
 
+NaiveFox Transport is a research project created entirely with AI. This covers all
+project-specific code and documentation; upstream dependencies retain their
+original authorship and licenses.
+
 This directory is an example site for the `NaiveFox` server and client.
 Its existing CSS, JavaScript and four SVGs are ordinary example files; their
 names and counts are not a transport requirement.

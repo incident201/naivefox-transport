@@ -1,5 +1,9 @@
 # Historical transport experiments
 
+NaiveFox Transport is a research project created entirely with AI. This covers all
+project-specific code and documentation; upstream dependencies retain their
+original authorship and licenses.
+
 Retired experiments and their measured outcomes remain in Git history.
 They are not supported configuration choices or acceptance results.
 

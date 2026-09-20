@@ -138,6 +138,8 @@ jobs:
           cat > release-notes.md <<EOF
           Caddy 2.11.2 for Linux x86_64 with the single current NaiveFox transport.
 
+          NaiveFox Transport is a research project whose project-specific code and documentation were created entirely with AI. Upstream dependencies retain their original authorship and licenses.
+
           Configure basic_auth and destination policy directly inside naivefox_transport. Client and server must be updated together; only the current matching pair is supported.
 
           Set application_root to one absolute directory containing the complete public site. The server derives startup resources from index.html and serves their actual bytes from an immutable memory snapshot. There are no compulsory CSS/JS/image filenames, resource counts, manifest files or padding sizes. Other files remain available from disk on GET/HEAD.

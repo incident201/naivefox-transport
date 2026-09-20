@@ -1,5 +1,9 @@
 # Default HTTPS packet delivery
 
+NaiveFox Transport is a research project created entirely with AI. This covers all
+project-specific code and documentation; upstream dependencies retain their
+original authorship and licenses.
+
 https:// is the default NaiveFox delivery, directly to the origin or through a
 compatible CDN. Client and server are updated together; only the current
 matching implementation is supported. wss:// explicitly selects WebSocket

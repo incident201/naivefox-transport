@@ -1,5 +1,9 @@
 # Site contract for NaiveFox
 
+NaiveFox Transport is a research project created entirely with AI. This covers all
+project-specific code and documentation; upstream dependencies retain their
+original authorship and licenses.
+
 Set `application_root` to one absolute directory containing `index.html` and
 the complete public site. The module discovers startup resources from that HTML.
 There are no compulsory CSS, JavaScript or image filenames, resource counts,

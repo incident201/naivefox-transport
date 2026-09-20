@@ -1,5 +1,9 @@
 # NaiveFox transport for Caddy
 
+NaiveFox Transport is a research project created entirely with AI. This covers all
+project-specific code and documentation; upstream dependencies retain their
+original authorship and licenses.
+
 This module is the server for the single current NaiveFox transport. Update
 client and server together. Only the current matching pair is supported;
 explicit delivery adapters share the current wire contract without version

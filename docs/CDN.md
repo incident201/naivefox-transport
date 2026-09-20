@@ -1,5 +1,9 @@
 # CDN deployment
 
+NaiveFox Transport is a research project created entirely with AI. This covers all
+project-specific code and documentation; upstream dependencies retain their
+original authorship and licenses.
+
 CDN is an optional deployment of the default [HTTPS packet transport](HTTPS.md).
 Use https://user~PIN:password@host:443 whether the endpoint is direct or proxied.
 The origin keeps its inner private key; the intermediary is not trusted with
