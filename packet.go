@@ -58,8 +58,8 @@ func (t *Transport) provisionPacket() error {
 	if err != nil {
 		return errors.New("load packet TLS certificate/key")
 	}
-	t.packetTLS = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, SessionTicketsDisabled: true}
-	t.packetAdmission = make(chan struct{}, 64)
+	t.packetTLS = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, SessionTicketsDisabled: true, DynamicRecordSizingDisabled: true}
+	t.packetAdmission = make(chan struct{}, 128)
 	t.packets = make(map[string]*packetSession)
 	t.packetNonces = make(map[[32]byte]*packetSession)
 	return nil
@@ -218,7 +218,7 @@ func (t *Transport) servePacket(w http.ResponseWriter, r *http.Request, next cad
 		return nil
 	}
 	p.mu.Lock()
-	allowed := !p.closed && p.active < 12
+	allowed := !p.closed && p.active < 20
 	if allowed {
 		p.active++
 	}
@@ -555,7 +555,7 @@ func (t *Transport) runPacket(p *packetSession) {
 		return
 	}
 	state := &session{authed: true, packet: true, realtime: true, up: 1, down: 1, wake: make(chan struct{}, 1), last: time.Now()}
-	state.peer = mux.NewHTTP3(t.dialTransportDestination)
+	state.peer = mux.NewPacket(t.dialTransportDestination)
 	state.realtimeConn = cancelCloser{p.cancel}
 	hello, err := cell.Encode(0, 512, []cell.Frame{{Kind: cell.Hello, Body: []byte(transportIdentity + "\n" + t.application.identity + "\nhttps\n" + p.id)}})
 	if err != nil {
@@ -657,7 +657,14 @@ func (t *Transport) downloadPacket(w http.ResponseWriter, r *http.Request, p *pa
 	p.writer.Do(func() {
 		go func() {
 			defer p.close()
-			t.writeCells(p.ctx, state, 5*time.Second, func(body []byte) error { return writePacketCell(p.tls, body) })
+			t.writeCells(p.ctx, state, 5*time.Second, func(body []byte) error {
+				p.raw.Cork()
+				err := writePacketCell(p.tls, body)
+				if uncorked := p.raw.Uncork(); err == nil {
+					err = uncorked
+				}
+				return err
+			})
 		}()
 	})
 	packetHeaders(w)
@@ -674,29 +681,40 @@ func (t *Transport) downloadPacket(w http.ResponseWriter, r *http.Request, p *pa
 		if err := controller.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
 			return err
 		}
-		envelope := make([]byte, 44+len(block.Body))
-		binary.BigEndian.PutUint64(envelope[:8], block.Sequence)
-		binary.BigEndian.PutUint32(envelope[8:12], uint32(len(block.Body)))
-		copy(envelope[12:44], packet.MAC(secret, "down", p.id, block.Sequence, 0, block.Body))
-		copy(envelope[44:], block.Body)
-		if n, err := w.Write(envelope); err != nil {
-			return err
-		} else if n != len(envelope) {
-			return io.ErrShortWrite
-		}
-		if err := controller.Flush(); err != nil {
-			return err
+		var header [44]byte
+		binary.BigEndian.PutUint64(header[:8], block.Sequence)
+		binary.BigEndian.PutUint32(header[8:12], uint32(len(block.Body)))
+		copy(header[12:44], packet.MAC(secret, "down", p.id, block.Sequence, 0, block.Body))
+		for _, part := range [][]byte{header[:], block.Body} {
+			if n, err := w.Write(part); err != nil {
+				return err
+			} else if n != len(part) {
+				return io.ErrShortWrite
+			}
 		}
 		cursor++
+		// Blocks that are already queued share one flush.
+		if !p.raw.Ready(generation, cursor) {
+			if err := controller.Flush(); err != nil {
+				return err
+			}
+		}
 	}
 }
 
-func waitPacketBatch(ctx context.Context, s *session) bool {
-	timer := time.NewTimer(2 * time.Millisecond)
+var packetBatchInterval = 2 * time.Millisecond
+
+// The batch window opens when the drained downlink gets new work. Once it
+// closes, full cells of a backlog not limited by credit are sent without
+// waiting again; a partial tail opens a new window. OPENED is sent at once:
+// the client sends no target data until it arrives.
+func waitPacketBatch(ctx context.Context, s *session, until time.Time) bool {
+	timer := time.NewTimer(time.Until(until))
 	defer timer.Stop()
 	for {
 		pressure := s.peer.PressureWithCreditFloor(realtimeCreditFloor)
-		if realtimeFramedBytes(pressure) >= int64(s.maxDownCell()) {
+		if pressure.Opened > 0 || !time.Now().Before(until) ||
+			realtimeFramedBytes(pressure) >= int64(s.maxDownCell()) {
 			return true
 		}
 		select {

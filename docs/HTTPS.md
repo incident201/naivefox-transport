@@ -95,21 +95,23 @@ an authentication rejection.
 
 Inside TLS, a four-byte length precedes each unchanged NFOX cell. Shared
 OPEN/DATA/CREDIT/FIN/RESET handling multiplexes at most 32 target streams.
-The packet adapter uses 1-MiB per-stream credit, replenished after local delivery.
+The packet adapter uses 4-MiB downstream and 1-MiB upstream per-stream credit,
+replenished after local delivery.
 
-Uploads have eight slots and a 512-KiB byte bound. A successful authenticated
+Uploads have sixteen slots and a 1-MiB byte bound. A successful authenticated
 reply confirms storage of the named block as well as the cumulative accepted
 prefix. The client retains a receipted out-of-order block until that prefix
 advances, without retransmitting its body or freeing its window slot. Original
 ciphertext is retained for missing-receipt retries; out-of-order arrival never
 duplicates a TLS byte.
-Downstream replay holds at most 2 MiB and 128 blocks per session and applies
-backpressure when full. Only an authenticated cursor releases retained data.
+Downstream replay holds at most 8 MiB and 512 blocks per session and applies
+backpressure when full. The TLS records of one cell form evenly sized blocks of
+at most 64 KiB, and blocks that are already queued share one HTTP flush. Only an authenticated cursor releases retained data.
 If a reconnect needs data older than the retained floor, the session ends.
 It never silently recreates a target connection or skips bytes.
 
-There are at most 32 packet sessions, sixteen provisional sessions, 64 aggregate
-HTTP handlers and twelve active handlers per packet session. max_sessions can
+There are at most 32 packet sessions, sixteen provisional sessions, 128
+aggregate HTTP handlers and twenty active handlers per packet session. max_sessions can
 further restrict admission. Setup has a 30-second deadline, client retries and
 download recovery a 30-second bound, and sessions expire after 90 seconds
 without fresh authenticated client progress. Old request replays cannot renew
@@ -132,11 +134,15 @@ accepting it; size and read deadlines reject unfinished or oversized uploads.
 
 Packet upload cell selection accounts for framing and includes an 8-KiB
 capacity, so a 4-KiB application write does not need a second POST merely for
-its headers. The packet downlink batches ready ACK, CREDIT and payload for a
-fixed interval of at most 2 ms; a full cell bypasses that wait. This prevents
-small control writes from consuming the idle TCP congestion window before the
-reply. The cell length and body are written to inner TLS together. Direct
-carrier scheduling remains unchanged.
+its headers. The packet downlink batches ready ACK, CREDIT and payload in one
+window of at most 2 ms, opened when the drained queue gets new work; a full
+cell bypasses that wait. Once the window closes, full cells of a backlog that
+is not limited by stream credit are sent without waiting again; a partial tail
+or a small credit grant opens a new window. This prevents small control writes
+from consuming the idle TCP congestion window before the reply. OPENED is sent
+without waiting, because the client sends no target data before it arrives. The
+cell length and body are written to inner TLS together. Direct carrier
+scheduling remains unchanged.
 
 The configured max_sessions is shared across direct and packet admission.
 The public unauthenticated visitor slot is transferred to packet setup when

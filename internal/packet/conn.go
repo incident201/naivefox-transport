@@ -14,11 +14,11 @@ import (
 
 const (
 	MaxBlock     = 64 * 1024
-	UploadSlots  = 8
+	UploadSlots  = 16
 	UploadLimit  = UploadSlots * MaxBlock
-	ReplayLimit  = 2 * 1024 * 1024
+	ReplayLimit  = 8 * 1024 * 1024
 	ReceiptCount = 2 * UploadSlots
-	ReplaySlots  = 128
+	ReplaySlots  = 512
 )
 
 var (
@@ -60,6 +60,8 @@ type Conn struct {
 	attached                    bool
 	readDeadline, writeDeadline time.Time
 	readWaiting                 bool
+	corked                      bool
+	cork                        []byte
 }
 
 func New() *Conn {
@@ -173,6 +175,38 @@ func (c *Conn) Write(p []byte) (int, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.corked {
+		if c.closed {
+			return 0, c.closeError()
+		}
+		c.cork = append(c.cork, p...)
+		return len(p), nil
+	}
+	return c.writeLocked(p, MaxBlock)
+}
+
+// Cork collects writes until Uncork, so the TLS records of one cell become
+// evenly sized blocks instead of one block per record plus a small tail.
+func (c *Conn) Cork() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.corked = true
+}
+
+func (c *Conn) Uncork() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data := c.cork
+	c.cork, c.corked = nil, false
+	if len(data) == 0 {
+		return nil
+	}
+	count := (len(data) + MaxBlock - 1) / MaxBlock
+	_, err := c.writeLocked(data, (len(data)+count-1)/count)
+	return err
+}
+
+func (c *Conn) writeLocked(p []byte, blockSize int) (int, error) {
 	written := 0
 	for len(p) > 0 {
 		if c.closed {
@@ -181,7 +215,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 		if deadlinePassed(c.writeDeadline) {
 			return written, os.ErrDeadlineExceeded
 		}
-		n := min(len(p), MaxBlock)
+		n := min(len(p), blockSize)
 		if n > ReplayLimit-c.outputBytes || len(c.output) >= ReplaySlots {
 			if err := c.waitLocked(context.Background(), c.writeDeadline); err != nil {
 				return written, err
@@ -299,6 +333,14 @@ func (c *Conn) Flight(ctx context.Context, next uint64) ([]Block, error) {
 			return nil, err
 		}
 	}
+}
+
+// Ready reports whether Next would return a block without waiting.
+func (c *Conn) Ready(generation, next uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && c.attached && generation == c.generation &&
+		next >= c.outputFloor && next < c.outputNext
 }
 
 func (c *Conn) Usage() (int, int) {

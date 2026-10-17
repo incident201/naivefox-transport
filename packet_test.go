@@ -569,7 +569,7 @@ func TestExpiredUploadReceiptDoesNotTerminateLiveSession(t *testing.T) {
 	c.module.packetMu.Lock()
 	p := c.module.packets[c.id]
 	c.module.packetMu.Unlock()
-	for sequence := uint32(1); sequence <= 20; sequence++ {
+	for sequence := uint32(1); sequence <= packet.ReceiptCount+4; sequence++ {
 		body, err := cell.Encode(sequence, 512, nil)
 		if err != nil {
 			t.Fatal(err)

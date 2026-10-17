@@ -7,21 +7,22 @@ import (
 )
 
 const (
-	Header           = 16
-	FrameHeader      = 16
-	MaxCell          = 256 * 1024
-	Window           = 512 * 1024
-	HTTP3Window      = 1024 * 1024
-	MaxStreams       = 32
-	Open        byte = 1
-	Data        byte = 2
-	Fin         byte = 3
-	Reset       byte = 4
-	Credit      byte = 5
-	Auth        byte = 6
-	Opened      byte = 7
-	Ack         byte = 8
-	Hello       byte = 9
+	Header            = 16
+	FrameHeader       = 16
+	MaxCell           = 256 * 1024
+	Window            = 512 * 1024
+	HTTP3Window       = 1024 * 1024
+	PacketWindow      = 4 * 1024 * 1024
+	MaxStreams        = 32
+	Open         byte = 1
+	Data         byte = 2
+	Fin          byte = 3
+	Reset        byte = 4
+	Credit       byte = 5
+	Auth         byte = 6
+	Opened       byte = 7
+	Ack          byte = 8
+	Hello        byte = 9
 )
 
 type Frame struct {

@@ -112,7 +112,10 @@ or SOCKS5 upstream owns destination DNS and policy. The default dial timeout is
 reporting local proxy success.
 
 Both peers start each stream with 524288 bytes (WSS) or 1048576 bytes
-(QUIC and HTTPS packet delivery) of send credit and receive budget. DATA decrements those counters. CREDIT replenishes send credit only
+(QUIC) of send credit and receive budget. HTTPS packet delivery gives the
+client a 4194304-byte receive budget for server data and keeps a 1048576-byte
+server receive budget for client data; each sender's credit equals its peer's
+budget. DATA decrements those counters. CREDIT replenishes send credit only
 after bytes were written to the receiving local socket, and cannot exceed the
 initial window. FIN is a half-close: remaining data in the opposite direction
 continues. RESET aborts the stream. Stream byte offsets wrap modulo 2^32;
@@ -124,7 +127,7 @@ At most 32 streams are active per session. The server has 16 queued outbound
 reads of at most 16 KiB per stream. Inbound DATA frames coalesce into chunks of
 at most 16 KiB under the byte-credit bound, with one ordered FIN slot and a
 single wake signal. Tiny wire frames therefore do not exhaust an unrelated
-frame-count quota. The fixed window permits at most 33 (WSS) or 65 (HTTPS/QUIC) allocated inbound
+frame-count quota. The fixed server receive budget permits at most 33 (WSS) or 65 (HTTPS/QUIC) allocated inbound
 data chunks including the in-flight writer chunk; payload bytes across the
 queue and writer never exceed the corresponding stream window. Credit alone is
 not a total memory bound; prefetched/in-flight cells and frame allocations are
@@ -231,7 +234,8 @@ CREDIT still follows actual local socket delivery. Future, decreasing,
 malformed or HTTP-carried ACKs fail closed. Clients never send ACK.
 AUTH is permitted only in startup, not after the transition.
 
-Each carrier multiplexes up to 32 streams with 512-KiB (WSS) or 1-MiB (HTTPS/QUIC) per-stream credit.
+Each carrier multiplexes up to 32 streams with 512-KiB (WSS) or 1-MiB (QUIC) per-stream credit;
+HTTPS packet delivery uses 4 MiB downstream and 1 MiB upstream.
 The client upload buffer is at most 256 KiB per stream. Byte offsets wrap
 modulo 2^32; stream byte counts have no fixed 4-GiB ceiling. Native WS ingress
 is capped at 32 callbacks and 2 MiB, and its PONG queue at 32.

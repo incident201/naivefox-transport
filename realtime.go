@@ -280,6 +280,7 @@ func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval tim
 	}
 	heartbeat := time.NewTimer(firstDelay)
 	defer heartbeat.Stop()
+	var batchUntil time.Time
 	for {
 		idleHeartbeat := false
 		pressure := s.peer.PressureWithCreditFloor(realtimeCreditFloor)
@@ -300,7 +301,10 @@ func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval tim
 				continue
 			}
 		} else if s.packet {
-			if !waitPacketBatch(ctx, s) {
+			if batchUntil.IsZero() {
+				batchUntil = time.Now().Add(packetBatchInterval)
+			}
+			if !waitPacketBatch(ctx, s, batchUntil) {
 				return
 			}
 		} else if pressure.Bytes > 0 && s.readyDownCapacity(pressure) != 512 && realtimeFramedBytes(pressure) < int64(min(realtimeCoalescingDownCapacity(pressure.Bytes), s.maxDownCell())) {
@@ -386,6 +390,10 @@ func (t *Transport) writeCells(ctx context.Context, s *session, idleInterval tim
 		}
 		t.stats.CellCapacities[strconv.Itoa(capacity)]++
 		t.mu.Unlock()
+		if remaining := s.peer.PressureWithCreditFloor(realtimeCreditFloor); remaining.Bytes == 0 || remaining.Queued > remaining.Bytes ||
+			realtimeFramedBytes(remaining) < int64(s.readyDownCapacity(remaining)) {
+			batchUntil = time.Time{}
+		}
 		heartbeat.Reset(idleInterval)
 	}
 }
